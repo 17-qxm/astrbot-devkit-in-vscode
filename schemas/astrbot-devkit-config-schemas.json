@@ -1,0 +1,126 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "$id": "https://astrbot.dev/schemas/astrbot-devkit-config.json",
+    "title": "AstrBot DevKit 配置",
+    "description": "astrbot-devkit-in-vscode 扩展的工作区配置文件",
+
+    "type": "object",
+    "additionalProperties": false,
+
+    "properties": {
+        "version": {
+            "type": "number",
+            "const": 2,
+            "title": "配置文件版本",
+            "description": "schema 版本号,当前为 2。v1 配置可由扩展自动迁移(缺省字段使用默认值)",
+            "default": 2
+        },
+
+        "astrbotServer": {
+            "type": "string",
+            "title": "AstrBot 服务器地址",
+            "description": "AstrBot 服务器地址,以下格式均可:1) host:port(如 127.0.0.1:6185);2) 完整 http(s) URL(如 http://127.0.0.1:6185、https://astrbot.example.com)",
+            "default": "127.0.0.1:6185",
+            "pattern": "^(https?://)?[a-zA-Z0-9.\\-]+(:[0-9]+)?(/.*)?$",
+            "examples": [
+                "127.0.0.1:6185",
+                "http://127.0.0.1:6185",
+                "https://astrbot.example.com",
+                "https://astrbot.example.com:8443/astrbot",
+                "192.168.1.10:6185"
+            ]
+        },
+
+        "astrbotAPIkey": {
+            "type": "string",
+            "title": "AstrBot API Key",
+            "description": "用于访问 AstrBot HTTP API 的鉴权密钥,在 AstrBot 后台 → 配置 → 服务器配置 中获取",
+            "default": ""
+        },
+
+        "logleakKey": {
+            "type": "string",
+            "title": "Logleak 调试插件 Key",
+            "description": "日志投射插件的连接密钥。由扩展自动生成并写入,无需手动填写;留空时日志功能不可用",
+            "default": ""
+        },
+
+        "debug": {
+            "type": "object",
+            "title": "Debug 调试设置",
+            "description": "F5 Debug 工作流的可配置项",
+            "additionalProperties": false,
+            "default": {},
+            "properties": {
+                "stopAction": {
+                    "type": "string",
+                    "title": "停止 debug 后的插件处理",
+                    "description": "停止 debug 后如何处理插件:ask=每次询问是否禁用(默认);disable=直接禁用;keep=保留运行",
+                    "enum": ["ask", "disable", "keep"],
+                    "default": "ask"
+                },
+                "reloadAfterPush": {
+                    "type": "string",
+                    "title": "推送后重载",
+                    "description": "配置推送成功后是否重载插件:ask=询问(默认);always=总是重载;never=不重载",
+                    "enum": ["ask", "always", "never"],
+                    "default": "ask"
+                },
+                "ruffFix": {
+                    "type": "boolean",
+                    "title": "ruff 自动修复",
+                    "description": "F5 的 ruff 检查是否带 --fix 自动修复",
+                    "default": false
+                },
+                "reconnectLimit": {
+                    "type": "number",
+                    "title": "日志重连上限",
+                    "description": "日志流断线后的最大重连次数,超过后停止并提示",
+                    "default": 5,
+                    "minimum": 0
+                }
+            }
+        },
+
+        "pluginWorkspaces": {
+            "type": "array",
+            "title": "插件工作区列表",
+            "description": "本工作区下管理的 AstrBot 插件列表",
+            "default": [],
+            "items": {
+                "type": "object",
+                "title": "插件工作区条目",
+                "additionalProperties": false,
+                "required": ["dir", "name", "version"],
+                "properties": {
+                    "dir": {
+                        "type": "string",
+                        "title": "插件目录",
+                        "description": "插件根目录的相对路径(相对工作区根目录,直接含 main.py 与 metadata.yaml 的那一层),例如 ./astrbot_plugin_hello",
+                        "examples": ["./astrbot_plugin_hello", "./plugins/my_plugin"]
+                    },
+                    "name": {
+                        "type": "string",
+                        "title": "插件名",
+                        "description": "插件的唯一标识名,需与 metadata.yaml 中的 name 字段一致",
+                        "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$",
+                        "examples": ["astrbot_plugin_hello", "astrbot_chat_helper"]
+                    },
+                    "version": {
+                        "type": "string",
+                        "title": "插件版本号",
+                        "description": "插件版本号,格式 v[数字].[数字].[数字],例如 v1.0.0、v0.2.1",
+                        "pattern": "^v(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+                        "examples": ["v1.0.0", "v0.2.1", "v0.1.0", "v2.5.3"]
+                    },
+                    "active": {
+                        "type": "boolean",
+                        "title": "活跃插件",
+                        "description": "标记当前活跃插件(F5/Debug 的目标)。多个条目同时为 true 视为非法,扩展写入时保证唯一",
+                        "default": false
+                    }
+                }
+            }
+        }
+    }
+}

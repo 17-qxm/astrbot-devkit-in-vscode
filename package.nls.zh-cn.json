@@ -1,0 +1,19 @@
+{
+    "astrbot-devkit-in-vscode.InitEnv": "初始化 AstrBot 插件编辑环境",
+    "astrbot-devkit-in-vscode.WorkspaceCheck": "检查工作区是否已有 AstrBot 插件",
+    "astrbot-devkit.Refresh": "刷新",
+    "astrbot-devkit.CreateConfig": "创建配置文件",
+    "astrbot-devkit.OpenConfig": "打开配置文件",
+    "astrbot-devkit.EditServerAddress": "修改服务器地址",
+    "astrbot-devkit.Connect": "连接服务器",
+    "astrbot-devkit.AddWorkspace": "添加插件工作区",
+    "astrbot-devkit.ScanPlugins": "扫描工作区插件",
+    "astrbot-devkit.SetActivePlugin": "设为活跃插件",
+    "astrbot-devkit.Debug": "调试(推送并观察日志)",
+    "astrbot-devkit.StopDebug": "停止调试",
+    "astrbot-devkit.OpenPluginConfig": "打开插件配置",
+    "astrbot-devkit.SavePluginConfig": "推送插件配置到服务器",
+    "astrbot-devkit.OpenServerLogs": "打开服务器日志",
+    "astrbot-devkit.SendMessage": "向平台推送消息",
+    "astrbot-devkit.ListServerPlugins": "列出服务器插件"
+}

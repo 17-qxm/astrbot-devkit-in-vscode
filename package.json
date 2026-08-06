@@ -1,0 +1,263 @@
+{
+  "name": "astrbot-devkit-in-vscode",
+  "displayName": "AstrBot DevKit In VSCode",
+  "description": "Make AstrBot plugin programming more comfortable!",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.125.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "astrbot",
+          "title": "AstrBot",
+          "icon": "media/astrbot.svg"
+        }
+      ]
+    },
+    "views": {
+      "astrbot": [
+        {
+          "type": "tree",
+          "id": "astrbot-devkit.main",
+          "name": "AstrBot DevKit"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "astrbot-devkit-in-vscode.InitEnv",
+        "title": "%astrbot-devkit-in-vscode.InitEnv%",
+        "category": "AstrBot"
+      },
+      {
+        "command": "astrbot-devkit-in-vscode.WorkspaceCheck",
+        "title": "%astrbot-devkit-in-vscode.WorkspaceCheck%",
+        "category": "AstrBot"
+      },
+      {
+        "command": "astrbot-devkit.Refresh",
+        "title": "%astrbot-devkit.Refresh%",
+        "category": "AstrBot",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "astrbot-devkit.CreateConfig",
+        "title": "%astrbot-devkit.CreateConfig%",
+        "category": "AstrBot"
+      },
+      {
+        "command": "astrbot-devkit.OpenConfig",
+        "title": "%astrbot-devkit.OpenConfig%",
+        "category": "AstrBot"
+      },
+      {
+        "command": "astrbot-devkit.EditServerAddress",
+        "title": "%astrbot-devkit.EditServerAddress%",
+        "category": "AstrBot"
+      },
+      {
+        "command": "astrbot-devkit.Connect",
+        "title": "%astrbot-devkit.Connect%",
+        "category": "AstrBot"
+      },
+      {
+        "command": "astrbot-devkit.AddWorkspace",
+        "title": "%astrbot-devkit.AddWorkspace%",
+        "category": "AstrBot",
+        "icon": "$(add)"
+      },
+      {
+        "command": "astrbot-devkit.ScanPlugins",
+        "title": "%astrbot-devkit.ScanPlugins%",
+        "category": "AstrBot",
+        "icon": "$(search)"
+      },
+      {
+        "command": "astrbot-devkit.SetActivePlugin",
+        "title": "%astrbot-devkit.SetActivePlugin%",
+        "category": "AstrBot"
+      },
+      {
+        "command": "astrbot-devkit.Debug",
+        "title": "%astrbot-devkit.Debug%",
+        "category": "AstrBot",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "astrbot-devkit.StopDebug",
+        "title": "%astrbot-devkit.StopDebug%",
+        "category": "AstrBot",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "astrbot-devkit.OpenPluginConfig",
+        "title": "%astrbot-devkit.OpenPluginConfig%",
+        "category": "AstrBot"
+      },
+      {
+        "command": "astrbot-devkit.SavePluginConfig",
+        "title": "%astrbot-devkit.SavePluginConfig%",
+        "category": "AstrBot"
+      },
+      {
+        "command": "astrbot-devkit.OpenServerLogs",
+        "title": "%astrbot-devkit.OpenServerLogs%",
+        "category": "AstrBot"
+      },
+      {
+        "command": "astrbot-devkit.SendMessage",
+        "title": "%astrbot-devkit.SendMessage%",
+        "category": "AstrBot"
+      },
+      {
+        "command": "astrbot-devkit.ListServerPlugins",
+        "title": "%astrbot-devkit.ListServerPlugins%",
+        "category": "AstrBot"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "astrbot-devkit.Debug",
+        "key": "f5",
+        "when": "astrbotDevkit.active && !astrbotDevkit.debugging"
+      },
+      {
+        "command": "astrbot-devkit.StopDebug",
+        "key": "shift+f5",
+        "when": "astrbotDevkit.debugging"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "astrbot-devkit.Refresh",
+          "when": "view == astrbot-devkit.main",
+          "group": "navigation"
+        },
+        {
+          "command": "astrbot-devkit.AddWorkspace",
+          "when": "view == astrbot-devkit.main",
+          "group": "navigation"
+        },
+        {
+          "command": "astrbot-devkit.ScanPlugins",
+          "when": "view == astrbot-devkit.main",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "astrbot-devkit.Connect",
+          "when": "view == astrbot-devkit.main && viewItem == devkitServer",
+          "group": "inline@1"
+        },
+        {
+          "command": "astrbot-devkit.EditServerAddress",
+          "when": "view == astrbot-devkit.main && viewItem == devkitServer"
+        },
+        {
+          "command": "astrbot-devkit.OpenConfig",
+          "when": "view == astrbot-devkit.main && viewItem == devkitServer"
+        },
+        {
+          "command": "astrbot-devkit.Debug",
+          "when": "view == astrbot-devkit.main && viewItem == devkitWorkspaceActive && !astrbotDevkit.debugging",
+          "group": "inline@1"
+        },
+        {
+          "command": "astrbot-devkit.StopDebug",
+          "when": "view == astrbot-devkit.main && viewItem == devkitWorkspaceActive && astrbotDevkit.debugging",
+          "group": "inline@1"
+        },
+        {
+          "command": "astrbot-devkit.SetActivePlugin",
+          "when": "view == astrbot-devkit.main && viewItem == devkitWorkspace"
+        },
+        {
+          "command": "astrbot-devkit.OpenPluginConfig",
+          "when": "view == astrbot-devkit.main && viewItem == devkitWorkspace"
+        },
+        {
+          "command": "astrbot-devkit.OpenPluginConfig",
+          "when": "view == astrbot-devkit.main && viewItem == devkitWorkspaceActive"
+        },
+        {
+          "command": "astrbot-devkit.OpenServerLogs",
+          "when": "view == astrbot-devkit.main && viewItem == devkitLogs"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "astrbot-devkit.Debug",
+          "when": "astrbotDevkit.active && !astrbotDevkit.debugging"
+        },
+        {
+          "command": "astrbot-devkit.StopDebug",
+          "when": "astrbotDevkit.debugging"
+        },
+        {
+          "command": "astrbot-devkit.SetActivePlugin",
+          "when": "false"
+        },
+        {
+          "command": "astrbot-devkit.OpenPluginConfig",
+          "when": "astrbotDevkit.active"
+        }
+      ]
+    },
+    "jsonValidation": [
+      {
+        "fileMatch": ".vscode/astrbot-devkit-config.json",
+        "url": "./schemas/astrbot-devkit-config-schemas.json"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "npm run check-types && npm run lint && node esbuild.js",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "npm run check-types && npm run lint && node esbuild.js --production",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "24.x",
+    "@types/vscode": "^1.125.0",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.0.0",
+    "esbuild": "^0.28.1",
+    "eslint": "^10.5.0",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.61.1"
+  },
+  "overrides": {
+    "diff": "^8.0.4",
+    "serialize-javascript": "^7.0.6"
+  },
+  "dependencies": {
+    "adm-zip": "^0.6.0",
+    "jsonc-parser": "^3.3.1",
+    "yaml": "^2.9.0"
+  }
+}
