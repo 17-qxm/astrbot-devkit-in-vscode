@@ -165,12 +165,10 @@ export function activate(context: vscode.ExtensionContext) {
         }
     }
 
-    // 保留现有命令的注册(main.ts 的 WorkspaceCheck 在 activate 末尾被旧代码调用,
-    // 当前 main.ts 中 WorkspaceCheck 为空实现;此处仍调用以兼容旧行为)
-    AstrBotMain.WorkspaceCheck();
 }
 
 export function deactivate() {
+    client?.retire();
     relay?.dispose();
 }
 
@@ -184,9 +182,20 @@ function registerCommands(context: vscode.ExtensionContext): void {
     // ── launch.json ${command:...} 动态取值:当前活跃插件名 ──
     reg('astrbot-devkit.GetActivePluginName', () => getActivePluginName());
 
+    // ── 原有命令:InitEnv / WorkspaceCheck(重构时遗漏,补注册) ──
+    reg('astrbot-devkit-in-vscode.InitEnv', () => AstrBotMain.InitEnv());
+    reg('astrbot-devkit-in-vscode.WorkspaceCheck', () => AstrBotMain.WorkspaceCheck());
+
     // ── 视图刷新 ──
     reg('astrbot-devkit.Refresh', async () => {
-        rebuildClient();
+        // 仅当连接相关配置(server/key)变化时才重建 client;
+        // 否则只刷新视图 + 重连,避免销毁日志通道/断开日志流
+        const cur = getConfig();
+        if (cur && configKey(cur) !== clientConfigKey) {
+            rebuildClient();
+        } else if (!cur && client) {
+            rebuildClient();
+        }
         syncContext();
         if (client && client.state !== 'connected') {
             try { await client.connect(); } catch {}
@@ -264,11 +273,20 @@ function registerCommands(context: vscode.ExtensionContext): void {
         await saveConfig(config);
         syncContext();
         if (config.debug.receiveLogs) {
-            // 开启:若正在调试且 relay 就绪,立即恢复日志流
-            if (vscode.debug.activeDebugSession?.type === 'astrbot' && relay) {
-                void relay.start();
+            // 开启:立即开始接收日志(独立于调试会话,现在生效)
+            if (relay) {
+                // 开关开启不清空通道历史(clearFirst=false),继续追加
+                const ok = await relay.start(false);
+                if (!ok) {
+                    vscode.window.showWarningMessage(
+                        '日志连接失败,请检查 astrbotAPIkey 与日志投射插件状态',
+                    );
+                } else {
+                    vscode.window.showInformationMessage('已开启日志接收');
+                }
+            } else {
+                vscode.window.showWarningMessage('客户端未就绪,请先配置并连接服务器');
             }
-            vscode.window.showInformationMessage('已开启日志接收');
         } else {
             relay?.stop();
             vscode.window.showInformationMessage('已关闭日志接收');
@@ -421,6 +439,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
             if (config) {
                 client?.retire();
                 client = createClient(config, s => tree.setConnectionState(s, config.astrbotServer));
+                clientConfigKey = configKey(config);
                 relay = new LogRelay(client);
             } else {
                 const ch = vscode.window.createOutputChannel(OUTPUT_CHANNEL_SERVER);

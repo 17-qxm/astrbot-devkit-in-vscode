@@ -1,71 +1,66 @@
-# astrbot-devkit-in-vscode README
+# AstrBot DevKit In VSCode
 
-This is the README for your extension "astrbot-devkit-in-vscode". After writing up a brief description, we recommend including the following sections.
+让 AstrBot 插件开发在 VS Code 内闭环:环境初始化、插件模板下载、一键推送调试、服务器日志实时观察,尽量不离开编辑器。
 
-## Features
+## 功能
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+- **环境初始化**(`初始化 AstrBot 插件编辑环境`):创建虚拟环境、安装 `astrbot`、下载 AstrBot-Skill 到 `.claude/skills/`(并软链 `.codex/skills`)、下载 helloworld 模板并 `git init`
+- **侧边栏视图**(Activity Bar 的 AstrBot 图标):
+  - 服务器连接状态、自动连接开关
+  - 「本地插件」单选列表,决定 F5 推送目标
+  - 插件配置编辑(`_conf_schema.json` 规范,校验后推送到服务器)
+  - 接收服务器日志开关(独立于调试,实时控制)
+- **原生调试**(`type: astrbot`):
+  - F5 / 命令面板「将插件推送至AstrBot服务器并观察」启动
+  - 打包插件 zip → 上传安装(同名插件自动先删后装)→ 观察服务器日志
+  - 日志经 logleak 插件(SSE)实时写入「AstrBot Server」输出通道
+  - 停止后可按 `stopAction` 处理插件(询问禁用/直接禁用/保留)
+- **OpenAPI 插件管理**:插件配置读写、启用/禁用、消息推送、服务器插件列表
 
-For example if there is an image subfolder under your extension project workspace:
+## 使用
 
-\!\[feature X\]\(images/feature-x.png\)
+1. 打开你的 AstrBot 插件项目,扩展会自动引导创建 `.vscode/astrbot-devkit-config.json`(服务器地址 + API Key)
+2. 侧边栏「本地插件」选中推送目标
+3. 按 F5(或命令面板搜「将插件推送至AstrBot服务器并观察」)推送调试
+4. 侧边栏「接收服务器日志」开关控制日志接收
 
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+### 前置条件
 
-## Requirements
+- AstrBot 服务器 v4.18+(日志功能需 v4.24+,并安装 [astrbot_plugin_devkit_for_vscode_logleak](https://github.com/17-qxm/astrbot_plugin_devkit_for_vscode_logleak))
+- VS Code 1.125+
+- 环境初始化:Python 3.10+ / uv(可选)、git
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+### launch.json 示例
 
-## Extension Settings
+```jsonc
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "astrbot",
+      "request": "launch",
+      "name": "将插件推送至AstrBot服务器并观察",
+      "pluginName": "${command:astrbot-devkit.GetActivePluginName}"
+    }
+  ]
+}
+```
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+## 开发
 
-For example:
+```bash
+npm install
+npm run compile        # 类型检查 + lint + esbuild 打包
+npm run watch          # 开发监听
+```
 
-This extension contributes the following settings:
+按 F5 启动 Extension Development Host 调试扩展本身。
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+## 设计文档
 
-## Known Issues
+- [design.md](docs/design.md) — 设计文档
+- [implementation.md](docs/implementation.md) — 实现清单(精确到文件与函数)
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
+## 安全提示
 
-## Release Notes
-
-Users appreciate release notes as you update your extension.
-
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
-
----
-
-## Following extension guidelines
-
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
-
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+`.vscode/astrbot-devkit-config.json` 含 API Key,已被 `.gitignore` 排除,**请勿提交该文件**。

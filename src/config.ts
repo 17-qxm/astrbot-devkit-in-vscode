@@ -274,7 +274,7 @@ export function validateConfig(config: DevKitConfig): string[] {
     if (config.pluginWorkspaces) {
         const activeCount = config.pluginWorkspaces.filter(w => w.active).length;
         if (activeCount > 1) {
-            errors.push(`pluginWorkspaces 中 active=true 的条目超过一个(${activeCount} 个),已自动修正为唯一`);
+            errors.push(`pluginWorkspaces 中 active=true 的条目超过一个(${activeCount} 个),运行时将取第一个作为活跃插件`);
         }
         const names = config.pluginWorkspaces.map(w => w.name);
         const dup = names.filter((n, i) => names.indexOf(n) !== i);

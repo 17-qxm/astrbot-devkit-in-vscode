@@ -244,7 +244,7 @@ function friendlyNetworkError(msg: string, baseUrl: string): string {
         return `域名解析失败:${baseUrl}(地址可能有误)`;
     }
     if (lower.includes('certificate') || lower.includes('ssl') || lower.includes('self-signed')) {
-        return `SSL 证书校验失败:${baseUrl}(自签证书需在配置中允许)`;
+        return `SSL 证书校验失败:${baseUrl}(自签证书场景请确认服务器 TLS 配置)`;
     }
     return msg;
 }

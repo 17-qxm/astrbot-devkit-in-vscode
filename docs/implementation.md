@@ -547,8 +547,8 @@ export class LogRelay {
     constructor(client: AstrBotClient, channel: vscode.OutputChannel);
     get running(): boolean;
 
-    /** 清空 AstrBot Server 通道并弹出,启动 SSE;返回是否启动成功 */
-    start(): Promise<boolean>;
+    /** 启动 SSE;clearFirst=true 清空通道(默认),false 保留历史(侧边栏开关开启时用) */
+    start(clearFirst?: boolean): Promise<boolean>;
 
     /** 断开 SSE,停止重连 */
     stop(): void;
@@ -561,7 +561,7 @@ export class LogRelay {
 - `fetch` 流式读取:`response.body.getReader()` 按 `\n` 切行,只处理 `data: ` 前缀;SSE 事件 JSON:`{ ts, level, logger, message }`
 - 写出行格式:`[HH:MM:SS] [LEVEL] logger message`(ts 取本地时间)
 - `message` 可能含多行:按 `\n` 拆成多行 `appendLine`,保持顺序
-- 重连:失败/断开后按 `SSE_RECONNECT_BACKOFF_MS` 退避,次数上限 `config.debug.reconnectLimit`;超过后 `appendLine('⚠️ 日志连接已断开,请重新 Debug')` 并停止
+- 重连:失败/断开后按 `SSE_RECONNECT_BACKOFF_MS` 退避;**`reconnectLimit` 语义 = 连续建连失败次数上限**(成功收到过数据后清零);超过后 `appendLine('⚠️ 日志连接已断开,请重新 Debug')` 并停止
 - 心跳:服务端 30s 发一次 ping;客户端 60s 无数据(含 ping)视为断线,走重连逻辑
 - 401 → 提示「AstrBot API Key(astrbotAPIkey)不匹配或缺失」;404 → 提示「日志投射插件未安装或 AstrBot 版本过低(需 v4.24+)」
 - `stop()` 用 `AbortController` 终止 fetch;`dispose` 时 `channel.dispose()`

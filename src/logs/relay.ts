@@ -1,7 +1,7 @@
 // src/logs/relay.ts
 // SSE 日志客户端:连接 logleak 插件的 stream 端点,把服务器日志写入
-// 独立的「AstrBot Server」OutputChannel。仅 debug 会话期间运行。
-// 见 implementation.md §9 与 design.md §9.2。
+// 独立的「AstrBot Server」OutputChannel。由侧边栏「接收服务器日志」开关
+// 独立控制(现在是否接收),调试会话可顺带启动。见 implementation.md §9。
 //
 // 不引入额外依赖,用 Node 18+ 原生 fetch 流式读取。
 
@@ -51,15 +51,16 @@ export class LogRelay {
 
     /**
      * 启动日志流:清空通道并弹出,连接 SSE。
+     * @param clearFirst 是否先清空通道历史(默认 true;侧边栏开关开启时传 false 保留历史)
      * @returns true=已启动;false=连接失败(鉴权失败/插件未就绪)
      */
-    async start(): Promise<boolean> {
+    async start(clearFirst = true): Promise<boolean> {
         // 先停掉可能存在的旧会话
         this.stopInternal(false);
 
         this.running = true;
         this.reconnectCount = 0;
-        this.channel.clear();
+        if (clearFirst) {this.channel.clear();}
         this.channel.appendLine(`── AstrBot 服务器日志(${this.client.baseUrl})──`);
         this.channel.show(true);
         logger.log('启动 SSE 日志流');
@@ -108,7 +109,9 @@ export class LogRelay {
             const ok = await this.connectOnce();
             if (!this.running) {break;}
             if (ok) {
-                // 正常结束(服务端关闭):作为断线,继续重连
+                // 成功建立过连接(收到过数据)后断开:连续失败计数清零,继续重连。
+                // 语义:reconnectLimit = 连续建连失败次数上限(默认 5);
+                // 服务端正常关流(如插件 reload)不会计入失败。
                 this.reconnectCount = 0;
             }
             if (this.reconnectCount >= limit) {

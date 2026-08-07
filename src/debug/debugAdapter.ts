@@ -1,6 +1,6 @@
 // 原生 Debug Adapter(type: astrbot):把「打包 → upload 推送 → 日志观察」
 // 包装成 VS Code 原生调试会话。launch.json 控制参数,调试工具栏控制启停。
-// 停止逻辑(relay.stop + stopAction)与旧 DebugSession 保持一致,两个入口共用一份。
+// 停止时按 stopAction 处理插件;日志接收由侧边栏开关独立控制,不随调试结束自动断开。
 //
 // 注意:插件运行在 AstrBot 服务器进程,本调试器不提供断点;
 // 会话语义 = 推送 + 日志观察,直到用户点调试工具栏「停止」。
@@ -162,8 +162,7 @@ export class AstrBotDebugAdapter implements vscode.DebugAdapter {
 
     private async onTerminate(request: DapRequest): Promise<void> {
         this.respond(request);
-        // 同步快速推送的停止逻辑:断开日志 + 按 stopAction 处理插件
-        this.deps.getRelay()?.stop();
+        // 日志接收由侧边栏「接收服务器日志」开关独立控制,调试结束不自动断开
         if (this.lastWorkspace) {
             await this.applyStopAction(this.lastWorkspace);
         }
@@ -210,6 +209,8 @@ export class AstrBotDebugAdapter implements vscode.DebugAdapter {
         const relay = this.deps.getRelay();
         if (!config.debug.receiveLogs) {
             this.output('console', '⚠️ 日志接收已关闭(侧边栏「接收服务器日志」开关),跳过日志流\n');
+        } else if (relay?.isRunning) {
+            this.output('console', '日志流已在接收中,内容见「AstrBot Server」输出通道\n');
         } else if (logAvailable && relay) {
             const started = await relay.start();
             if (!started) {
