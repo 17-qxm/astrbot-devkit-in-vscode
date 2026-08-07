@@ -255,14 +255,14 @@ export function listSubdirs(relPath: string): string[] {
  */
 export function createSymlink(targetRel: string, linkRel: string): boolean {
     const link = resolve(linkRel);
-    if (!link) return false;
+    if (!link) {return false;}
     // target 如果是相对路径,相对于 link 的父目录解析(和 ln -s 行为一致)
     let target: string;
     if (path.isAbsolute(targetRel)) {
         target = targetRel;
     } else {
         const root = getRoot();
-        if (!root) return false;
+        if (!root) {return false;}
         // path.join 会把 ../ 正确解析掉
         target = path.normalize(path.join(path.dirname(link), targetRel));
     }
