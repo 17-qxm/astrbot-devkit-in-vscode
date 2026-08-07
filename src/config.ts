@@ -94,9 +94,12 @@ export function toRelativePosix(absPath: string): string | undefined {
     const root = getWorkspaceRoot();
     if (!root) {return undefined;}
     const rel = path.relative(root, absPath);
-    if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
-        // 统一为 POSIX 分隔符;空字符串表示工作区根本身
-        return rel.split(path.sep).join('/') || '.';
+    if (!rel) {
+        return '.';   // 工作区根本身
+    }
+    if (!rel.startsWith('..') && !path.isAbsolute(rel)) {
+        // 统一为 POSIX 分隔符
+        return rel.split(path.sep).join('/');
     }
     return undefined;
 }
@@ -423,12 +426,15 @@ export function parseMetadata(
 
 /** 校验某目录是否是合法插件根(含 metadata.yaml 且能解析出 name+version) */
 export function isPluginRoot(dirRel: string): PluginCandidate | undefined {
-    const abs = resolve(dirRel);
+    // 兼容绝对路径(showOpenDialog 返回)与相对路径
+    const abs = path.isAbsolute(dirRel) ? dirRel : resolve(dirRel);
     if (!abs) {return undefined;}
     const meta = path.join(abs, 'metadata.yaml');
     if (!fs.existsSync(meta)) {return undefined;}
     const parsed = parseMetadata(readText(meta));
     if (!parsed?.name || !parsed?.version) {return undefined;}
-    const rel = toRelativePosix(abs) ?? dirRel;
+    // 目录在工作区外时返回 undefined(不能作为工作区插件)
+    const rel = toRelativePosix(abs);
+    if (!rel) {return undefined;}
     return { dir: rel, name: parsed.name, version: parsed.version };
 }

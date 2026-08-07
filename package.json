@@ -3,6 +3,7 @@
   "displayName": "AstrBot DevKit In VSCode",
   "description": "Make AstrBot plugin programming more comfortable!",
   "version": "0.0.1",
+  "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.125.0"
   },
