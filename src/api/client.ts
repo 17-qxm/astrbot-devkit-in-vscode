@@ -55,6 +55,8 @@ export interface AstrBotClient {
     request<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<T>;
     /** multipart 上传 zip:POST /api/v1/plugins/install/upload,字段名 file */
     uploadZip(zipBuffer: Buffer, filename: string): Promise<Record<string, unknown>>;
+    /** 配置重建时调用:退役后的状态变化不再对外生效(避免旧配置的连接结果干扰 UI) */
+    retire(): void;
 }
 
 // ─── base URL 规范化 ─────────────────────────────────────
@@ -87,8 +89,11 @@ export function createClient(
 ): AstrBotClient {
     const emitter = new vscode.EventEmitter<ConnectionState>();
     let state: ConnectionState = 'unconfigured';
+    let retired = false;
+    let pendingConnect: Promise<void> | undefined;
 
     const setState = (s: ConnectionState) => {
+        if (retired) {return;}
         if (s === state) {return;}
         state = s;
         emitter.fire(s);
@@ -109,9 +114,10 @@ export function createClient(
             throw new ApiError('INVALID_RESPONSE', '服务器地址未配置或非法');
         }
         const ac = new AbortController();
-        const timer = setTimeout(() => ac.abort(), timeoutMs);
+        // timeoutMs <= 0 表示不设超时(如大文件上传);否则按指定毫秒数中止
+        const timer = timeoutMs > 0 ? setTimeout(() => ac.abort(), timeoutMs) : undefined;
         const headers = new Headers(init.headers);
-        // 默认带 Bearer;调用方也可显式覆盖(如日志流用 X-Logleak-Key,不走这里)
+        // 默认带 Bearer;调用方也可显式覆盖(日志流 relay 走独立 fetch,不走这里)
         if (!headers.has('Authorization') && config.astrbotAPIkey) {
             headers.set('Authorization', `Bearer ${config.astrbotAPIkey}`);
         }
@@ -127,7 +133,7 @@ export function createClient(
             const msg = (e as Error)?.message ?? String(e);
             throw new ApiError('SERVER_ERROR', friendlyNetworkError(msg, baseUrl));
         } finally {
-            clearTimeout(timer);
+            if (timer) {clearTimeout(timer);}
         }
     };
 
@@ -137,20 +143,31 @@ export function createClient(
         config,
         onStateChange: emitter.event,
 
+        /** 配置重建后调用:旧 client 的连接结果不再更新状态/UI */
+        retire(): void {
+            retired = true;
+        },
+
         async connect(timeoutMs = PROBE_TIMEOUT_MS): Promise<void> {
             if (!baseUrl) {
                 setState('unconfigured');
                 throw new ApiError('INVALID_RESPONSE', '服务器地址未配置或非法');
             }
+            // 已连接则直接返回;并发调用复用同一个进行中的连接,避免重复请求/通知
+            if (state === 'connected') {return;}
+            if (pendingConnect) {return pendingConnect;}
             setState('checking');
-            try {
+            pendingConnect = (async () => {
                 await doRequest<unknown>('/api/v1/plugins?include_reserved=false', { method: 'GET' }, timeoutMs);
                 setState('connected');
                 logger.log(`已连接 AstrBot 服务器:${baseUrl}`);
-            } catch (e) {
+            })().catch(e => {
                 setState('error');
                 throw e;
-            }
+            }).finally(() => {
+                pendingConnect = undefined;
+            });
+            return pendingConnect;
         },
 
         disconnect() {
@@ -168,7 +185,7 @@ export function createClient(
             return doRequest<Record<string, unknown>>(
                 '/api/v1/plugins/install/upload',
                 { method: 'POST', body: fd },
-                0,   // 上传可能较慢,关闭默认超时(传 0 表示用 fetch 默认)
+                0,   // 上传可能较慢,关闭超时
             );
         },
     };

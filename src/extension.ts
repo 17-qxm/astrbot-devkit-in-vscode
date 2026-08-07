@@ -4,35 +4,42 @@
 
 import * as vscode from 'vscode';
 import * as AstrBotMain from './main.js';
-import { initLogger, log, show } from './logger.js';
 import * as logger from './logger.js';
+import { initLogger } from './logger.js';
 import {
     getConfig, ensureConfigFile, saveConfig, validateConfig,
     setActiveWorkspace as persistActiveWorkspace,
-    getActiveWorkspace, watchConfig, generateKey,
+    getActiveWorkspace, watchConfig,
     scanWorkspaceForPlugins, isPluginRoot, getConfigFilePath,
     toRelativePosix, getWorkspaceRoot,
-    type PluginWorkspace, type DevKitConfig,
+    DEFAULT_DEBUG, type PluginWorkspace, type DevKitConfig,
 } from './config.js';
 import {
     createClient, describeApiError, type AstrBotClient, type ConnectionState,
 } from './api/client.js';
 import * as pluginsApi from './api/plugins.js';
 import * as imApi from './api/im.js';
-import { DevkitTreeProvider, type DevkitNode } from './views/devkitTree.js';
+import { DevkitTreeProvider } from './views/devkitTree.js';
+import { DevkitLocalProvider } from './views/localTree.js';
 import {
     openPluginConfig, pushPluginConfig, forgetDocument,
 } from './views/configEditor.js';
 import { LogRelay } from './logs/relay.js';
-import { DebugSession } from './debug/debugSession.js';
+import { AstrBotDebugAdapter } from './debug/debugAdapter.js';
 import { OUTPUT_CHANNEL_SERVER } from './constants.js';
 
 // ─── 模块级状态(单例) ───────────────────────────────────
 
 let tree: DevkitTreeProvider;
+let localTree: DevkitLocalProvider;
 let client: AstrBotClient | undefined;
 let relay: LogRelay | undefined;
-let debugSession: DebugSession | undefined;
+/** 当前 client 对应的连接相关配置快照(server|key),用于判断是否需要重建 */
+let clientConfigKey = '';
+
+function configKey(c: DevKitConfig): string {
+    return `${c.astrbotServer}|${c.astrbotAPIkey}`;
+}
 
 /** 同步 astrbotDevkit.active / activePlugin 上下文 key */
 function syncContext(): void {
@@ -41,6 +48,12 @@ function syncContext(): void {
     vscode.commands.executeCommand('setContext', 'astrbotDevkit.active', !!active);
     vscode.commands.executeCommand('setContext', 'astrbotDevkit.activePlugin', active?.name ?? '');
     tree.refresh();
+    localTree.refresh();
+}
+
+/** 供 launch.json 的 ${command:...} 动态取值:返回当前活跃插件名 */
+function getActivePluginName(): string {
+    return getActiveWorkspace(getConfig())?.name ?? '';
 }
 
 /** 重建 client(配置变化时调用) */
@@ -48,20 +61,19 @@ function rebuildClient(): void {
     const config = getConfig();
     relay?.dispose();
     relay = undefined;
-    debugSession = undefined;
+    // 退役旧 client:其进行中的连接(如静默探活)结果不再更新 UI
+    client?.retire();
+    client = undefined;
     if (!config) {
-        client = undefined;
+        clientConfigKey = '';
         tree.setConnectionState('unconfigured', '');
         return;
     }
     client = createClient(config, state => {
         tree.setConnectionState(state, config.astrbotServer);
     });
+    clientConfigKey = configKey(config);
     relay = new LogRelay(client);
-    debugSession = new DebugSession(client, relay);
-    debugSession.onStateChange((state) => {
-        tree.setDebugging(state === 'streaming');
-    });
     // 初始状态:已配置但未连接
     tree.setConnectionState('unconfigured', config.astrbotServer);
 }
@@ -70,15 +82,17 @@ function rebuildClient(): void {
 
 export function activate(context: vscode.ExtensionContext) {
     initLogger(context);
-    log('AstrBot DevKit 扩展已激活');
+    logger.log('AstrBot DevKit 扩展已激活');
 
     tree = new DevkitTreeProvider();
+    localTree = new DevkitLocalProvider();
 
     // setContext 初始化
     vscode.commands.executeCommand('setContext', 'astrbotDevkit.debugging', false);
 
     // 注册侧边栏视图
     vscode.window.registerTreeDataProvider('astrbot-devkit.main', tree);
+    vscode.window.registerTreeDataProvider('astrbot-devkit.local', localTree);
 
     // 构建初始 client(若已有配置)
     rebuildClient();
@@ -86,14 +100,48 @@ export function activate(context: vscode.ExtensionContext) {
     // 注册全部命令
     registerCommands(context);
 
+    // 注册原生调试适配器(type: astrbot),与 extension 共享 client/relay
+    context.subscriptions.push(
+        vscode.debug.registerDebugAdapterDescriptorFactory('astrbot', {
+            createDebugAdapterDescriptor() {
+                return new vscode.DebugAdapterInlineImplementation(
+                    new AstrBotDebugAdapter({
+                        getClient: () => client,
+                        getRelay: () => relay,
+                    }),
+                );
+            },
+        }),
+    );
+
+    // 原生调试会话启停 → 同步侧边栏/状态栏/上下文
+    context.subscriptions.push(
+        vscode.debug.onDidStartDebugSession(s => {
+            if (s.type !== 'astrbot') {return;}
+            vscode.commands.executeCommand('setContext', 'astrbotDevkit.debugging', true);
+            tree.setDebugging(true);
+        }),
+        vscode.debug.onDidTerminateDebugSession(s => {
+            if (s.type !== 'astrbot') {return;}
+            vscode.commands.executeCommand('setContext', 'astrbotDevkit.debugging', false);
+            tree.setDebugging(false);
+        }),
+    );
+
     // 文档关闭时清理配置编辑会话
     context.subscriptions.push(
         vscode.workspace.onDidCloseTextDocument(doc => forgetDocument(doc)),
     );
 
-    // 配置文件监听:变更后重建 client + 同步上下文 + 刷新
+    // 配置文件监听:仅连接相关字段(server/key)变化时重建 client;
+    // 只改 debug/pluginWorkspaces 则刷新 UI,避免切换活跃插件时断连
     context.subscriptions.push(watchConfig(() => {
-        rebuildClient();
+        const cur = getConfig();
+        if (cur && configKey(cur) !== clientConfigKey) {
+            rebuildClient();
+        } else if (!cur) {
+            rebuildClient();
+        }
         syncContext();
     }));
 
@@ -105,8 +153,8 @@ export function activate(context: vscode.ExtensionContext) {
     if (!initial) {
         void maybeCreateFromScan();
     } else {
-        // 静默探活(design.md §3.3):不 await、失败静默
-        if (client) {
+        // 静默探活(design.md §3.3):autoConnect 关闭时不自动连接;不 await、失败静默
+        if (client && initial.autoConnect !== false) {
             client.connect().then(() => syncContext(), () => {});
         }
         // 校验配置(有错误只提示,不阻塞)
@@ -132,6 +180,9 @@ function registerCommands(context: vscode.ExtensionContext): void {
     const reg = (id: string, handler: (...args: unknown[]) => unknown) => {
         context.subscriptions.push(vscode.commands.registerCommand(id, handler));
     };
+
+    // ── launch.json ${command:...} 动态取值:当前活跃插件名 ──
+    reg('astrbot-devkit.GetActivePluginName', () => getActivePluginName());
 
     // ── 视图刷新 ──
     reg('astrbot-devkit.Refresh', async () => {
@@ -178,13 +229,75 @@ function registerCommands(context: vscode.ExtensionContext): void {
     // ── 连接服务器 ──
     reg('astrbot-devkit.Connect', async () => {
         if (!ensureClient()) {return;}
+        const target = client!;
         try {
-            await client!.connect();
+            await target.connect();
             syncContext();
-            vscode.window.showInformationMessage('✅ 已连接到 AstrBot 服务器');
+            // 连接期间配置若被重建(client 被替换),不再弹旧配置的通知
+            if (client === target) {
+                vscode.window.showInformationMessage('✅ 已连接到 AstrBot 服务器');
+            }
         } catch (e) {
-            vscode.window.showErrorMessage(`连接失败:${describeApiError(e)}`);
+            if (client === target) {
+                vscode.window.showErrorMessage(`连接失败:${describeApiError(e)}`);
+            }
         }
+    });
+
+    // ── 自动连接开关 ──
+    reg('astrbot-devkit.ToggleAutoConnect', async () => {
+        const config = getConfig();
+        if (!config) {return;}
+        config.autoConnect = !(config.autoConnect ?? true);
+        await saveConfig(config);
+        syncContext();
+        vscode.window.showInformationMessage(
+            `启动时自动连接服务器已${config.autoConnect ? '开启' : '关闭'}`,
+        );
+    });
+
+    // ── 接收服务器日志开关 ──
+    reg('astrbot-devkit.ToggleLogs', async () => {
+        const config = getConfig();
+        if (!config) {return;}
+        config.debug.receiveLogs = !config.debug.receiveLogs;
+        await saveConfig(config);
+        syncContext();
+        if (config.debug.receiveLogs) {
+            // 开启:若正在调试且 relay 就绪,立即恢复日志流
+            if (vscode.debug.activeDebugSession?.type === 'astrbot' && relay) {
+                void relay.start();
+            }
+            vscode.window.showInformationMessage('已开启日志接收');
+        } else {
+            relay?.stop();
+            vscode.window.showInformationMessage('已关闭日志接收');
+        }
+    });
+
+    // ── 调试结束后处理 ──
+    reg('astrbot-devkit.EditStopAction', async () => {
+        const config = getConfig();
+        if (!config) {return;}
+        const labels: Record<string, string> = {
+            ask: '每次询问(默认)',
+            disable: '直接禁用插件',
+            keep: '保留运行',
+        };
+        const pick = await vscode.window.showQuickPick(
+            (['ask', 'disable', 'keep'] as const).map(v => ({
+                label: labels[v],
+                value: v,
+            })),
+            {
+                title: '调试结束后对插件的处理',
+                placeHolder: `当前:${labels[config.debug.stopAction]}`,
+            },
+        );
+        if (!pick) {return;}
+        config.debug.stopAction = pick.value;
+        await saveConfig(config);
+        syncContext();
     });
 
     // ── 添加插件工作区 ──
@@ -237,19 +350,45 @@ function registerCommands(context: vscode.ExtensionContext): void {
         syncContext();
     });
 
-    // ── Debug(F5) ──
+    // ── Debug:以原生调试会话启动(动态配置,无需 launch.json;状态栏/节点按钮入口) ──
     reg('astrbot-devkit.Debug', async (arg?: unknown) => {
-        if (!ensureClient() || !debugSession) {return;}
+        const config = getConfig();
+        if (!config) {
+            vscode.window.showErrorMessage('尚未配置 AstrBot 服务器', '创建配置')
+                .then(p => { if (p === '创建配置') { vscode.commands.executeCommand('astrbot-devkit.CreateConfig'); } });
+            return;
+        }
         let ws = workspaceFromArg(arg);
         if (!ws) {
-            ws = getActiveWorkspace(getConfig());
+            ws = getActiveWorkspace(config);
         }
-        await debugSession.start(ws);
+        if (!ws) {
+            vscode.window.showWarningMessage('请先在侧边栏「本地插件」中选择推送目标');
+            return;
+        }
+        // 反复启动:已有 astrbot 调试会话时,先停止再重新启动(避免多会话/状态错乱)
+        const running = vscode.debug.activeDebugSession;
+        if (running?.type === 'astrbot') {
+            await vscode.debug.stopDebugging(running);
+        }
+        const folder = vscode.workspace.workspaceFolders?.[0];
+        await vscode.debug.startDebugging(folder, {
+            type: 'astrbot',
+            request: 'launch',
+            name: `快速推送:${ws.name}`,
+            pluginName: ws.name,
+        });
     });
 
-    // ── 停止 Debug(Shift+F5) ──
+    // ── 停止 Debug(状态栏按钮;原生调试由调试工具栏负责) ──
     reg('astrbot-devkit.StopDebug', async () => {
-        await debugSession?.stop();
+        const session = vscode.debug.activeDebugSession;
+        if (session?.type === 'astrbot') {
+            await vscode.debug.stopDebugging(session);
+        } else {
+            // 无活跃原生会话时,兜底断开日志流
+            relay?.stop();
+        }
     });
 
     // ── 打开插件配置 ──
@@ -280,6 +419,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
         if (!relay) {
             const config = getConfig();
             if (config) {
+                client?.retire();
                 client = createClient(config, s => tree.setConnectionState(s, config.astrbotServer));
                 relay = new LogRelay(client);
             } else {
@@ -405,7 +545,7 @@ async function addWorkspaces(cands: { dir: string; name: string; version: string
 async function maybeCreateFromScan(): Promise<void> {
     const cands = scanWorkspaceForPlugins();
     if (cands.length === 0) {
-        log('未检测到 AstrBot 插件,等待用户手动创建配置');
+        logger.log('未检测到 AstrBot 插件,等待用户手动创建配置');
         return;
     }
     const pick = await vscode.window.showInformationMessage(
@@ -416,18 +556,15 @@ async function maybeCreateFromScan(): Promise<void> {
         await ensureConfigFile();
         await addWorkspaces(cands);
         // 创建后引导补充服务器信息
-        void createConfigWizard(true);
+        void createConfigWizard();
     }
 }
 
 // ─── 创建配置向导 ────────────────────────────────────────
 
-/**
- * 创建/补全配置向导。
- * @param onlyServer true=配置已存在,只补服务器信息(用于 maybeCreateFromScan 后续)
- */
-async function createConfigWizard(onlyServer = false): Promise<void> {
-    // server
+/** 创建/补全配置向导:输入 server → API key → 探活验证 → 保存 */
+async function createConfigWizard(): Promise<void> {
+    // 1. server 地址
     const addr = await vscode.window.showInputBox({
         prompt: 'AstrBot 服务器地址',
         placeHolder: '127.0.0.1:6185',
@@ -437,7 +574,7 @@ async function createConfigWizard(onlyServer = false): Promise<void> {
     });
     if (!addr) {return;}
 
-    // API key(立即探活验证)
+    // 2. API key
     const key = await vscode.window.showInputBox({
         prompt: 'AstrBot API Key(abk_ 开头,在 WebUI 设置中创建)',
         placeHolder: 'abk_xxxxxxxx',
@@ -447,55 +584,38 @@ async function createConfigWizard(onlyServer = false): Promise<void> {
     });
     if (!key) {return;}
 
-    // 立即探活
+    // 3. 立即探活验证(失败时用户可选"仍然保存")
     const tmpConfig: DevKitConfig = {
         version: 2,
         astrbotServer: addr.trim(),
         astrbotAPIkey: key.trim(),
-        logleakKey: '',
-        debug: { stopAction: 'ask', reloadAfterPush: 'ask', ruffFix: false, reconnectLimit: 5 },
+        debug: { ...DEFAULT_DEBUG },
         pluginWorkspaces: getConfig()?.pluginWorkspaces ?? [],
     };
     const probe = createClient(tmpConfig);
-    await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: '验证服务器连接…' },
-        async () => {
-            try {
-                await probe.connect();
-            } catch (e) {
-                throw new Error(describeApiError(e));
-            }
-        },
-    ).then(
-        () => vscode.window.showInformationMessage('✅ 连接成功'),
-        (e: unknown) => {
-            vscode.window.showErrorMessage(`连接失败:${(e as Error).message}`, '仍然保存');
-            return '仍然保存' as const;
-        },
-    ).then(saveChoice => {
-        if (saveChoice === undefined) {
-            // 用户关掉错误通知 → 视为放弃
-            return false;
-        }
-        return true;
-    }).then(shouldSave => {
-        if (!shouldSave) {return;}
-        void (async () => {
-            tmpConfig.logleakKey = getConfig()?.logleakKey || generateKey();
-            if (!onlyServer && !getConfigFilePath()) {return;}
-            // 合并已有 pluginWorkspaces
-            const existing = getConfig();
-            if (existing) {
-                existing.astrbotServer = tmpConfig.astrbotServer;
-                existing.astrbotAPIkey = tmpConfig.astrbotAPIkey;
-                existing.logleakKey = tmpConfig.logleakKey;
-                await saveConfig(existing);
-            } else {
-                await saveConfig(tmpConfig);
-            }
-            syncContext();
-            show();
-            vscode.window.showInformationMessage('✅ 配置已保存');
-        })();
-    });
+    try {
+        await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title: '验证服务器连接…' },
+            () => probe.connect(),
+        );
+        vscode.window.showInformationMessage('✅ 连接成功');
+    } catch (e) {
+        const choice = await vscode.window.showErrorMessage(
+            `连接失败:${describeApiError(e)}`, '仍然保存',
+        );
+        if (choice !== '仍然保存') {return;}
+    }
+
+    // 4. 保存(已有配置则原地更新,否则写入新配置)
+    const existing = getConfig();
+    if (existing) {
+        existing.astrbotServer = addr.trim();
+        existing.astrbotAPIkey = key.trim();
+        await saveConfig(existing);
+    } else {
+        await saveConfig(tmpConfig);
+    }
+    syncContext();
+    logger.show();
+    vscode.window.showInformationMessage('✅ 配置已保存');
 }

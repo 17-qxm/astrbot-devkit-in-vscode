@@ -9,8 +9,8 @@ export const LOGLEAK_PLUGIN_ID = 'astrbot_plugin_devkit_for_vscode_logleak';
 export const LOGLEAK_SSE_ROUTE =
     `/api/v1/plugins/extensions/${LOGLEAK_PLUGIN_ID}/logs/stream`;
 
-/** 日志流鉴权请求头(插件侧自校验,与 OpenAPI 的 abk_ key 无关) */
-export const LOGLEAK_AUTH_HEADER = 'X-Logleak-Key';
+/** logleak 插件 GitHub 仓库(未安装时一键安装用) */
+export const LOGLEAK_PLUGIN_REPO = '17-qxm/astrbot_plugin_devkit_for_vscode_logleak';
 
 /** 扩展自身操作日志通道名(对应现有 logger.ts) */
 export const OUTPUT_CHANNEL_DEVKIT = 'AstrBot DevKit';
@@ -32,19 +32,11 @@ export const MIN_ASTRBOT_VERSION_LOGLEAK = 'v4.24';
 /** 新命令前缀(与现有 astrbot-devkit-in-vscode.* 区分) */
 export const CMD_PREFIX = 'astrbot-devkit.';
 
-/** F5 / Shift+F5 快捷键(仅当对应 context key 为 true 时接管) */
-export const DEBUG_KEY = 'f5';
-export const STOP_DEBUG_KEY = 'shift+f5';
-
 /** 默认请求超时(ms) */
 export const REQUEST_TIMEOUT_MS = 15_000;
 
 /** 探活专用短超时(ms),启动时静默探活用,见 design.md §3.3 */
 export const PROBE_TIMEOUT_MS = 5_000;
-
-/** ruff 可执行文件路径(相对工作区根) */
-export const RUFF_WIN = '.venv/Scripts/ruff.exe';
-export const RUFF_UNIX = '.venv/bin/ruff';
 
 /** 打包排除规则(目录名或 glob 通配) */
 export const ZIP_EXCLUDE = ['.git', '__pycache__', '.venv', 'dist', '.tmp', '*.pyc'];
@@ -60,5 +52,5 @@ export const SCAN_MAX_DEPTH = 4;
 
 /** 插件检索:跳过的目录名(不进、不下钻) */
 export const SCAN_EXCLUDE_DIRS = new Set([
-    '.git', 'node_modules', '.vscode', '.venv', 'dist', '.tmp', 'claude', 'codex',
+    '.git', 'node_modules', '.vscode', '.venv', 'dist', '.tmp', '.claude', '.codex',
 ]);

@@ -11,7 +11,7 @@
 
 1. **工作区配置 + 侧边栏**:使用 `./.vscode/astrbot-devkit-config.json` 管理连接信息;侧边栏用于切换 `pluginWorkspaces`、按 `_conf_schema.json` 规范编辑并提交插件配置、连接服务器。
 2. **OpenAPI 插件管理**:使用 `astrbotServer` + `astrbotAPIkey` 通过 AstrBot OpenAPI 读写/推送插件配置。
-3. **F5 Debug 工作流**:一键完成 ruff 检查 → 打包 → 压缩包推送 → 打开服务器日志观察,直到用户点击停止。
+3. **F5 Debug 工作流**:一键完成打包 → 压缩包推送 → 打开服务器日志观察,直到用户点击停止。
 4. **服务器日志投射**:通过 AstrBot 服务器插件把服务器日志投射到专用 OutputChannel,是 F5 Debug 流程的组件。
 
 `InitEnv`(环境初始化)逻辑保持现状,不在本文档范围内。
@@ -24,7 +24,7 @@ graph TD
         CFG[config.ts<br/>读写 astrbot-devkit-config.json]
         API[api/ OpenAPI 客户端<br/>Authorization Bearer abk_xxx]
         VIEW[views/ 侧边栏 TreeView<br/>pluginWorkspaces 切换 / 配置 / 连接]
-        DBG[debug/ F5 工作流<br/>ruff → zip → upload]
+        DBG[debug/ F5 工作流<br/>zip → upload]
         RELAY[logs/relay.ts<br/>SSE 日志流客户端]
         CH1[OutputChannel<br/>AstrBot DevKit]
         CH2[OutputChannel<br/>AstrBot Server]
@@ -40,7 +40,7 @@ graph TD
     DBG --> API
     DBG --> RELAY
     API -->|HTTP| OAPI
-    RELAY -->|SSE + X-Logleak-Key| LOGP
+    RELAY -->|SSE + Bearer| LOGP
     RELAY --> CH2
     DBG --> CH1
     LOGP -.订阅.-> LOGS
@@ -51,9 +51,9 @@ graph TD
 | 链路 | 用途 | 鉴权 | 方向 |
 |---|---|---|---|
 | 控制面(OpenAPI) | 插件配置读写、压缩包推送、插件检测 | `Authorization: Bearer abk_xxx` | VS Code → AstrBot |
-| 数据面(日志) | 服务器日志流(debug 用) | `X-Logleak-Key: <key>`(插件自校验) | AstrBot → VS Code(SSE) |
+| 数据面(日志) | 服务器日志流(debug 用) | `Authorization: Bearer abk_xxx`(全局鉴权接管) | AstrBot → VS Code(SSE) |
 
-`logleakKey` 只用于日志链路,与 OpenAPI 的 API Key 无关。日志中可能包含 LLM API Key、token、路径等敏感信息,因此日志通道必须独立鉴权,不能裸投。
+日志流复用 OpenAPI 的 API Key 鉴权(v0.2.0 实测:Plugin Pages 路由由全局鉴权层强制保护,未带 Bearer 返回 401,插件级密钥已废弃)。日志中可能包含敏感信息,客户端不落盘。
 
 ## 3. 启动逻辑(`extension.ts`)
 
@@ -81,7 +81,7 @@ graph TD
  ├─ 存在且合法 ──▶ 进入正常状态
  └─ 不存在 / 解析失败 ──▶ 触发「插件检索」
        ├─ 扫描范围:工作区根本身 + 所有子目录(深度 ≤ 4 层,
-       │   排除 .git/ node_modules/ .vscode/ .venv/ dist/ .tmp/ claude/ codex/)
+│   排除 .git/ node_modules/ .vscode/ .venv/ dist/ .tmp/ .claude/ .codex/)
        ├─ 判定标准:目录含 metadata.yaml,且解析出合法 name + version
        ├─ 提取:name → pluginWorkspaces[].name;version → [].version;
        │   插件根目录(含 metadata.yaml 的目录)→ [].dir
@@ -90,7 +90,7 @@ graph TD
 ```
 
 - **插件识别标准 = metadata.yaml 的 `name` + `version` 字段**(与 `pluginWorkspaces` 的字段一一对应)
-- **`dir` 必须是插件根目录**(直接含 `main.py` / `metadata.yaml` 的那一层),打包与 ruff 都以它为基准(§8.2)
+- **`dir` 必须是插件根目录**(直接含 `main.py` / `metadata.yaml` 的那一层),打包以它为基准(§8.2)
 - 需要新增 YAML 解析依赖(`yaml` 包),解析失败视为非插件目录
 - 选「忽略」后本次会话不再打扰,侧边栏显示空状态,可手动触发「自动检索插件」
 - 配置存在但 `pluginWorkspaces` 为空时,同样可手动触发检索
@@ -229,8 +229,7 @@ AstrBot v4.24+ 提供 Plugin Pages 机制,插件可在主 HTTP 服务上注册�
 | `version` | schema 版本,当前 2(v1 配置自动迁移) | — |
 | `astrbotServer` | 服务器地址,支持 `host:port` / 完整 URL | 控制面 |
 | `astrbotAPIkey` | OpenAPI API Key(`abk_` 开头) | 控制面 |
-| `logleakKey` | 日志投射插件的连接密钥(扩展自动生成,留空则日志不可用) | 数据面 |
-| `debug` | F5 调试设置:`stopAction` / `reloadAfterPush` / `ruffFix` / `reconnectLimit` | 本地 |
+| `debug` | F5 调试设置:`stopAction` / `reloadAfterPush` / `reconnectLimit` | 本地 |
 | `pluginWorkspaces` | 本工作区管理的插件列表(dir/name/version/active) | 本地 |
 
 ### 5.3 模块接口草案
@@ -240,11 +239,9 @@ interface DevKitConfig {
     version: 2;
     astrbotServer: string;
     astrbotAPIkey: string;
-    logleakKey?: string;
     debug: {
         stopAction: 'ask' | 'disable' | 'keep';
         reloadAfterPush: 'ask' | 'always' | 'never';
-        ruffFix: boolean;
         reconnectLimit: number;
     };
     pluginWorkspaces?: { dir: string; name: string; version: string; active?: boolean }[];
@@ -258,7 +255,7 @@ validateConfig(): string[];                   // 返回错误列表(空 = 合法
 scanWorkspaceForPlugins(): PluginCandidate[]; // 深度 ≤4 层扫描 metadata.yaml(§3.2)
 ```
 
-**v1 → v2 迁移规则**:读取到 `version: 1` 时,补齐 `debug` 块(全默认值)、条目 `active`(false)后写入并升级版本号;`logleakKey` 为空时由扩展在向导/装日志插件时生成。
+**v1 → v2 迁移规则**:读取到 `version: 1` 时,补齐 `debug` 块(全默认值)、条目 `active`(false)后写入并升级版本号。
 
 ### 5.4 校验规则与错误场景
 
@@ -268,7 +265,6 @@ scanWorkspaceForPlugins(): PluginCandidate[]; // 深度 ≤4 层扫描 metadata.
 | JSONC 解析失败 | 提示文件位置与解析错误,不阻塞其余功能 |
 | `astrbotServer` 非法 | 提示支持的格式(`host:port` / `http(s)://`) |
 | `astrbotAPIkey` 非 `abk_` 前缀 | 提示去 WebUI 创建 API Key |
-| 未配置 `logleakKey` | 日志功能提示缺失,其余功能不受影响 |
 | `pluginWorkspaces` 多个条目 `active: true` | 视为非法,扩展写入时保证唯一 |
 
 ### 5.5 配置输入入口
@@ -277,11 +273,10 @@ scanWorkspaceForPlugins(): PluginCandidate[]; // 深度 ≤4 层扫描 metadata.
 |---|---|---|---|
 | `astrbotServer` | 创建向导 InputBox | 侧边栏「修改服务器地址」命令 / 直接编辑 JSON | 输入时校验格式 |
 | `astrbotAPIkey` | 创建向导 InputBox | 侧边栏「编辑配置」命令 / 直接编辑 JSON | 明文存文件,README 提示勿提交 git |
-| `logleakKey` | **扩展自动生成**随机串 | 无需手输 | 生成后同时写入配置文件与日志插件配置(§9.1) |
 | `debug.*` | 默认值,不引导 | 直接编辑 JSON(enum 有补全) | 四个字段见 §5.2 |
 | `pluginWorkspaces` | 自动检索 + 确认 | 「添加插件工作区」「自动检索插件」命令 | **不手填 JSON**,由 metadata.yaml 生成 |
 
-**首次创建向导**(`创建配置文件` 命令):依次 `showInputBox` 输入 server → API key → **输入完立即探活验证**(失败则中止并提示)→ 自动生成 `logleakKey` → 自动触发一次检索填充 `pluginWorkspaces` → 写文件。
+**首次创建向导**(`创建配置文件` 命令):依次 `showInputBox` 输入 server → API key → **输入完立即探活验证**(失败则中止并提示)→ 自动触发一次检索填充 `pluginWorkspaces` → 写文件。
 
 **添加插件工作区**:`showOpenDialog` 选文件夹 → 读 metadata.yaml → 追加进 `pluginWorkspaces`。
 
@@ -395,15 +390,14 @@ unconfigured ──创建配置──▶ checking ──探活成功──▶ co
 ```
 按 F5 / 点击 Debug 按钮
  │
- ├─ 0. 前置检查:配置存在? 服务器已连接?(未连接 → 自动连接,见 §3.4)
- │          活跃插件已选?
- ├─ 1. ruff check           (工作区 .venv 中的 ruff,失败 → 中止)
- ├─ 2. 检测日志投射插件       (GET /plugins;未安装 → 通知栏提示安装,见 §9.3)
- ├─ 3. 打包 zip             (adm-zip;排除 .git/__pycache__/.venv 等)
- ├─ 4. upload 推送          (POST /plugins/install/upload)
- ├─ 5. 清空并弹出 "AstrBot Server" 通道
- ├─ 6. 启动 SSE 日志流        (持续写入,直到用户点停止)
- └─ 7. 通知栏显示进度 + 「停止」按钮
+├─ 0. 前置检查:配置存在? 服务器已连接?(未连接 → 自动连接,见 §3.4)
+│          活跃插件已选?
+├─ 1. 检测日志投射插件       (GET /plugins;未安装 → 通知栏提示安装,见 §9.3)
+├─ 2. 打包 zip             (adm-zip;排除 .git/__pycache__/.venv 等)
+├─ 3. upload 推送          (POST /plugins/install/upload;失败时同名插件先删后装)
+├─ 4. 清空并弹出 "AstrBot Server" 通道
+├─ 5. 启动 SSE 日志流        (持续写入,直到用户点停止)
+└─ 6. 推送成功通知 + 调试会话保持运行
 ```
 
 ### 8.2 步骤细节
@@ -415,34 +409,24 @@ unconfigured ──创建配置──▶ checking ──探活成功──▶ co
 - 无活跃插件 → 提示「请先在侧边栏选择一个插件工作区」,中止
 - debug 进行中再次按 F5 → 先执行 StopDebug,再重新开始完整流程
 
-**步骤 1 — ruff check**
-
-- 优先执行工作区 `.venv` 中的 ruff(Windows `.venv\Scripts\ruff` / Unix `.venv/bin/ruff`)
-- **`.venv` 不存在时**:通知「未检测到虚拟环境,是否创建?」→
-  - 「创建」→ 引导执行 venv 创建(复用 InitEnv 的创建逻辑)后继续检查
-  - 「跳过」→ 尝试系统 PATH 上的 `ruff`
-  - 两者都不可用 → 提示「插件要求 ruff 检查,请先安装 ruff 或创建虚拟环境」,中止
-- 输出写入 `AstrBot DevKit` 通道;失败(非零退出码)时中止 debug,提示「ruff 检查未通过,请先修复」
-- 后续可扩展 `--fix` 选项
-
-**步骤 3 — 打包**
+**步骤 1 — 打包**
 
 - 用 adm-zip(依赖已有)打包 **`pluginWorkspaces[].dir` 目录下的全部内容**(dir 必须是插件根,直接含 `main.py` / `metadata.yaml`;zip 根即 `main.py` 所在层),输出到 `.tmp/<plugin_name>.zip`
 - 排除规则:`.git/`、`__pycache__/`、`.venv/`、`dist/`、`.tmp/`、`*.pyc`
 - 打包前先删除旧 zip
 
-**步骤 4 — 推送**
+**步骤 2 — 推送**
 
 - `POST /api/v1/plugins/install/upload`,multipart 字段 `file` 携带 zip
 - 已安装插件重复推送的覆盖行为需在真实服务器验证(§13);若不支持覆盖,则先删除旧插件再上传(需用户确认)
 - 推送成功后**从 upload 响应中取 `plugin_id`**,作为后续 reload / 日志 / 禁用操作的插件 ID;可选触发 `reload` 确保加载新代码
 
-**步骤 5-6 — 日志观察**
+**步骤 3-4 — 日志观察**
 
 - 清空 `AstrBot Server` 通道并 `show()`,启动 SSE(§9.2)
 - **接收范围:从 debug 开始到 debug 结束**;结束后**保留**已接收内容,不清除(下次 F5 开始时才清空)
 
-**步骤 7 — 通知与停止**
+**步骤 5 — 通知与停止**
 
 - `showInformationMessage('正在调试 astrbot_plugin_xxx…', '停止')`
 - 点「停止」或侧边栏日志节点上的 StopDebug 命令 → **停止观察日志**(断开 SSE、停止重连)
@@ -453,7 +437,7 @@ unconfigured ──创建配置──▶ checking ──探活成功──▶ co
 ### 8.3 Debug 状态机
 
 ```
-idle ──Debug──▶ ruff ──▶ package ──▶ upload ──▶ streaming
+idle ──Debug──▶ package ──▶ upload ──▶ streaming
                                                 │   │
                                                 │   └─失败─▶ error(重连/提示)
                                                 └─Stop──▶ idle
@@ -471,10 +455,10 @@ idle ──Debug──▶ ruff ──▶ package ──▶ upload ──▶ stre
 
 ## 9. 日志投射(`logs/`)
 
-### 9.1 服务端插件(`astrbot_plugin_logleak`)
+### 9.1 服务端插件(`astrbot_plugin_devkit_for_vscode_logleak`,v0.2.0 已实测)
 
-- 通过 OpenAPI 安装(`POST /plugins/install/github`,`repository` 指向插件仓库)和配置(`PUT .../config`)
-- **`logleakKey` 由扩展自动生成**(随机串),同时写入本地配置文件与日志插件配置,用户无感
+- 通过 OpenAPI 安装(`POST /plugins/install/github`,仓库 `17-qxm/astrbot_plugin_devkit_for_vscode_logleak`)
+- **鉴权由 AstrBot 全局 API Key 层接管**,插件端不再自校验,无 `logleakKey` 配置
 - `main.py` 中注册 SSE 端点:
 
 ```python
@@ -487,9 +471,8 @@ context.register_web_api(
 ```
 
 - handler 逻辑:
-  1. 校验请求头 `X-Logleak-Key` 与插件配置中的 key 一致,不一致返回 `error_response(..., status_code=403)`
-  2. 订阅 AstrBot 全局日志事件(具体订阅 API 以实现时确认)
-  3. `stream_response` 持续 `yield` SSE 事件,事件格式:
+  1. 订阅 AstrBot 全局日志事件(实测经 `LogQueueHandler`)
+  2. `stream_response` 持续 `yield` SSE 事件,事件格式:
 
 ```
 data: {"ts": "2026-08-06T18:00:00+08:00", "level": "INFO", "logger": "astrbot.core", "message": "..."}
@@ -498,34 +481,35 @@ data: {"ts": "2026-08-06T18:00:00+08:00", "level": "INFO", "logger": "astrbot.co
 ### 9.2 VS Code 侧(`logs/relay.ts`)
 
 - 用 Node 18+ 原生 `fetch` 流式读取 SSE(`response.body` 按行解析 `data:` 前缀),不引入额外依赖
-- SSE URL:`{base}/api/v1/plugins/extensions/astrbot_plugin_logleak/logs/stream`,请求头携带 `X-Logleak-Key`
+- SSE URL:`{base}/api/v1/plugins/extensions/astrbot_plugin_devkit_for_vscode_logleak/logs/stream`,请求头 `Authorization: Bearer <astrbotAPIkey>`
 - 解析每条事件,`appendLine` 写入**独立 OutputChannel** `AstrBot Server`(debug 开始时清空,结束时保留)
 - 接收范围:仅 debug 会话期间(§8.2 步骤 5-6)
 - 行格式与 AstrBot 日志保持一致:`[HH:MM:SS] [LEVEL] logger message`
 - 连接生命周期:
   - 断线自动重连:退避序列 3s → 10s → 30s(封顶),**最多重连 5 次**,之后停止并提示「日志连接已断开,请重新 Debug」;重连前在通道打印 `⚠️ 连接断开,xx 秒后重连…`
-  - 服务端定期发 `ping` 事件做心跳,客户端 60s 无任何数据判定断线
+  - 服务端每 30s 发 `ping` 心跳;客户端 60s 无任何数据判定断线
+  - 401 → 提示「astrbotAPIkey 不匹配或缺失」;404 → 提示「插件未安装或 AstrBot 版本过低(需 v4.24+)」
   - StopDebug / 扩展 deactivate 时主动终止(`AbortController`)
   - `dispose` 时释放 fetch 流与 OutputChannel
 
 ### 9.3 日志插件缺失时的提示
 
-- F5 流程步骤 2 检测到服务器未安装 `astrbot_plugin_logleak` 时,**不自动安装**
-- 通知栏提示:`showInformationMessage('未检测到日志投射插件 astrbot_plugin_logleak,服务器日志将不可用', '安装', '继续')`
-  - 「安装」→ 调 `POST /plugins/install/github`(repository 见 §12 开放问题),自动生成 `logleakKey` 并同时写入本地配置与插件配置
+- F5 流程步骤 2 检测到服务器未安装 `astrbot_plugin_devkit_for_vscode_logleak` 时,通知栏提示「安装 / 继续」
+  - 「安装」→ 调 `POST /plugins/install/github`(仓库 `17-qxm/astrbot_plugin_devkit_for_vscode_logleak`)
   - 「继续」→ 跳过日志,只完成推送
+  - 插件存在但 `enabled/activated === false` → 提示「已禁用,请在 AstrBot WebUI 启用」
 
 ### 9.4 两个 OutputChannel
 
 | 通道名 | 内容 | 生命周期 |
 |---|---|---|
-| `AstrBot DevKit` | 扩展自身操作日志:ruff 输出、打包进度、推送结果、错误(现有 logger.ts) | 常驻 |
+| `AstrBot DevKit` | 扩展自身操作日志:打包进度、推送结果、错误(现有 logger.ts) | 常驻 |
 | `AstrBot Server` | debug 时的服务器日志(SSE 写入) | debug 开始时清空并弹出,结束时保留 |
 
 ### 9.5 安全要求
 
 - 日志可能含敏感信息:不落盘、不进扩展自身日志通道、不发送到任何第三方
-- 密钥校验失败时提示「logleakKey 不匹配,请检查配置文件与插件配置」,不暴露服务器内部信息
+- 鉴权失败(401)提示「astrbotAPIkey 不匹配或缺失」,不暴露服务器内部信息
 
 ## 10. 源码结构与 manifests 草案
 
@@ -608,7 +592,7 @@ src/
 |---|---|---|---|
 | 1 | 启动逻辑 + 配置层(加载/校验/检索/向导)+ 侧边栏骨架 | config.ts, yaml, views 基础 | 启动后可看到状态,可创建配置并选中插件 |
 | 2 | 插件配置查看/编辑/推送(schema 拉取 + 轻量校验 + PUT) | plugins.ts | 配置可编辑推送 |
-| 3 | F5 Debug 工作流(ruff → zip → upload → 通知停止) | debug/, plugins.uploadPluginZip | 一键推送可用 |
+| 3 | F5 Debug 工作流(zip → upload → 通知停止) | debug/, plugins.uploadPluginZip | 一键推送可用 |
 | 4 | 日志投射(服务端插件 + SSE + AstrBot Server 通道 + 缺失提示) | logs/relay.ts, 服务端插件 | debug 时日志实时可见 |
 | 5 | 消息推送(im/messages) | im.ts | 可向平台发消息 |
 
@@ -618,7 +602,7 @@ src/
 
 1. 日志投射插件是自研(`astrbot_plugin_logleak`)还是复用/对接已有插件?仓库地址待定(§9.3「安装」按钮依赖它)
 2. 配置推送后是否自动 `reload` 插件?(推荐:推送后询问,默认不自动)
-3. 插件自定义路由是否会受 OpenAPI 鉴权中间件拦截?(实现服务端插件时验证;若被拦截,确认该路由是否接受 `abk_` key,或仅用 logleakKey 自校验)
+3. ~~插件自定义路由是否会受 OpenAPI 鉴权中间件拦截?~~ —— 已实测确认:Plugin Pages 路由由全局鉴权层强制保护(未带 Bearer 返回 401),插件级密钥废弃,logleakKey 已移除
 4. AstrBot 插件订阅全局日志事件的具体 API(实现服务端插件时确认)
 5. `GET /plugins` 返回字段清单(实现时以实际响应为准)
 6. 多根工作区:目前按 `workspaceFolders[0]` 处理,是否需要在 UI 中提示?

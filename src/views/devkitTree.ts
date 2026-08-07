@@ -14,7 +14,10 @@ export type DevkitNode =
     | { kind: 'server'; state: ConnectionState; address: string }
     | { kind: 'workspace'; workspace: PluginWorkspace; active: boolean }
     | { kind: 'pluginConfig'; workspace: PluginWorkspace }
+    | { kind: 'autoConnectToggle'; enabled: boolean }
+    | { kind: 'stopAction'; action: 'ask' | 'disable' | 'keep' }
     | { kind: 'logs' }
+    | { kind: 'logsToggle'; enabled: boolean }
     | { kind: 'placeholder'; message: string; command?: string };
 
 /** TreeItem 的额外数据:附带节点本身,供命令回调取用 */
@@ -28,7 +31,7 @@ export interface DevkitItem extends vscode.TreeItem {
  * 侧边栏数据源。状态来源:
  *  - pluginWorkspaces → getConfig()
  *  - 连接状态 → setConnectionState() 由 extension 在 connect/探活后写入
- *  - debug 状态 → setDebugging() 由 debugSession 写入
+ *  - debug 状态 → setDebugging() 由 vscode.debug 会话事件写入(extension.ts)
  *
  * 任一变化都调 refresh() 触发重绘。
  */
@@ -46,7 +49,7 @@ export class DevkitTreeProvider implements vscode.TreeDataProvider<DevkitNode> {
         this.refresh();
     }
 
-    /** 由 debugSession 设置 debug 中标志(影响日志节点展示) */
+/** 由 extension 在原生调试会话启停时调用(影响日志节点展示) */
     setDebugging(debugging: boolean): void {
         this._debugging = debugging;
         this.refresh();
@@ -117,6 +120,43 @@ export class DevkitTreeProvider implements vscode.TreeDataProvider<DevkitNode> {
                 };
                 return item;
             }
+            case 'autoConnectToggle': {
+                const item = this.base(
+                    `自动连接服务器:${node.enabled ? '开' : '关'}`,
+                    'devkitAutoConnectToggle',
+                    node,
+                );
+                item.description = node.enabled ? '启动时自动拉取' : '需手动连接';
+                item.iconPath = new vscode.ThemeIcon(
+                    node.enabled ? 'check' : 'circle-outline',
+                );
+                item.tooltip = '启动时是否自动连接/拉取 AstrBot 服务器信息,点击切换';
+                item.command = {
+                    command: 'astrbot-devkit.ToggleAutoConnect',
+                    title: 'Toggle auto connect',
+                };
+                return item;
+            }
+            case 'stopAction': {
+                const label: Record<string, string> = {
+                    ask: '每次询问',
+                    disable: '直接禁用',
+                    keep: '保留运行',
+                };
+                const item = this.base(
+                    `调试结束后:${label[node.action]}`,
+                    'devkitStopAction',
+                    node,
+                );
+                item.description = '点击修改';
+                item.iconPath = new vscode.ThemeIcon('debug-stop');
+                item.tooltip = '停止 debug 后对插件的处理:每次询问 / 直接禁用 / 保留运行';
+                item.command = {
+                    command: 'astrbot-devkit.EditStopAction',
+                    title: 'Edit stop action',
+                };
+                return item;
+            }
             case 'logs': {
                 const item = this.base('日志', 'devkitLogs', node);
                 item.description = this._debugging ? '观察中' : 'AstrBot Server';
@@ -124,6 +164,23 @@ export class DevkitTreeProvider implements vscode.TreeDataProvider<DevkitNode> {
                 item.command = {
                     command: 'astrbot-devkit.OpenServerLogs',
                     title: 'Open Server Logs',
+                };
+                return item;
+            }
+            case 'logsToggle': {
+                const item = this.base(
+                    `接收服务器日志:${node.enabled ? '开' : '关'}`,
+                    'devkitLogsToggle',
+                    node,
+                );
+                item.description = node.enabled ? '点击关闭' : '点击开启';
+                item.iconPath = new vscode.ThemeIcon(
+                    node.enabled ? 'check' : 'circle-outline',
+                );
+                item.tooltip = '控制是否接收并显示服务器日志(调试时实时生效),点击切换';
+                item.command = {
+                    command: 'astrbot-devkit.ToggleLogs',
+                    title: 'Toggle server logs',
                 };
                 return item;
             }
@@ -195,8 +252,17 @@ export class DevkitTreeProvider implements vscode.TreeDataProvider<DevkitNode> {
             children.push({ kind: 'pluginConfig', workspace: active });
         }
 
+        // 3.5. 自动连接开关
+        children.push({ kind: 'autoConnectToggle', enabled: config.autoConnect ?? true });
+
+        // 3.6. 调试结束后处理
+        children.push({ kind: 'stopAction', action: config.debug.stopAction });
+
         // 4. 日志节点(始终显示,debug 时标记观察中)
         children.push({ kind: 'logs' });
+
+        // 4.5. 接收服务器日志开关(实时控制是否接收/显示)
+        children.push({ kind: 'logsToggle', enabled: config.debug.receiveLogs });
 
         return children;
     }

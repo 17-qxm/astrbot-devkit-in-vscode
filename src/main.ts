@@ -44,9 +44,9 @@ interface InitContext {
  *
  * 步骤:
  * 1. 选择 `uv` 或 `venv` 创建虚拟环境
- * 2. 安装 `astrbot` 和 `ruff`(已安装的跳过)
- * 3. 下载 `xunxiing/AstrBot-Skill` 最新 release 到 `./claude/skills/`,
- *    并创建 `./codex/skills` → `../claude/skills` 软链接
+ * 2. 安装 `astrbot`(已安装的跳过)
+ * 3. 下载 `xunxiing/AstrBot-Skill` 最新 release 到 `./.claude/skills/`,
+ *    并创建 `./.codex/skills` → `../.claude/skills` 软链接
  * 4. 下载 `Soulter/helloworld` 模板源码到 `./{插件名}`
  * 5. 为 `./{插件名}` 初始化本地 git 仓库
  *
@@ -187,7 +187,7 @@ function stepInstallDeps(): Step {
             logger.show();
 
             // 需要安装的包列表
-            const packagesToCheck = ['astrbot', 'ruff'];
+            const packagesToCheck = ['astrbot'];
             // 收集真正需要安装的包(已装的跳过)
             const packagesToInstall: string[] = [];
             for (const pkg of packagesToCheck) {
@@ -239,8 +239,8 @@ function stepInstallDeps(): Step {
 function stepDownloadSkill(): Step {
     return {
         title: 'step 3: 下载 AstrBot-Skill',
-        skipIfDone: () => tool.exists('claude/skills/AstrBot-Skill/'),
-        skipMessage: '已检测到 claude/skills/AstrBot-Skill,跳过下载',
+        skipIfDone: () => tool.exists('.claude/skills/AstrBot-Skill/'),
+        skipMessage: '已检测到 .claude/skills/AstrBot-Skill,跳过下载',
         doneMessage: '✅ AstrBot-Skill 已存在',
         failMessage: 'AstrBot-Skill 下载失败',
         run: async () => {
@@ -288,8 +288,8 @@ function stepDownloadSkill(): Step {
                         return false;
                     }
                     logger.log(`嵌套子目录: ${subdirs[0]}`);
-                    logger.log('移动 → claude/skills/AstrBot-Skill');
-                    if (!tool.move(`${tmpExtract}/${subdirs[0]}`, 'claude/skills/AstrBot-Skill')) {
+        logger.log('移动 → .claude/skills/AstrBot-Skill');
+        if (!tool.move(`${tmpExtract}/${subdirs[0]}`, '.claude/skills/AstrBot-Skill')) {
                         logger.error('整理 AstrBot-Skill 目录失败');
                         return false;
                     }
@@ -312,29 +312,29 @@ function stepDownloadSkill(): Step {
     };
 }
 
-// ─── step 3.1:创建 codex/skills 软链接 ───────────────────
+    // ─── step 3.1:创建 .codex/skills 软链接 ───────────────────
 
 function stepCreateSymlink(): Step {
     return {
-        title: 'step 3.1: 创建 codex/skills 软链接',
+        title: 'step 3.1: 创建 .codex/skills 软链接',
         // 独立幂等判断:软链接已存在即跳过
-        // (即使 claude/skills 之前已下载,首次软链接失败后重跑也能补上)
-        skipIfDone: () => tool.exists('codex/skills/'),
-        skipMessage: 'codex/skills 软链接已存在,跳过',
+        // (即使 .claude/skills 之前已下载,首次软链接失败后重跑也能补上)
+        skipIfDone: () => tool.exists('.codex/skills/'),
+        skipMessage: '.codex/skills 软链接已存在,跳过',
         // 软链接失败不中止整个流程:提示用户手动处理即可
         fatal: false,
-        failMessage: 'codex/skills 软链接创建失败(Windows 需开发者模式)。建议手动复制: xcopy /E /I /Y claude\\skills codex\\skills',
+        failMessage: '.codex/skills 软链接创建失败(Windows 需开发者模式)。建议手动复制: xcopy /E /I /Y .claude\\skills .codex\\skills',
         run: async () => {
-            // 相对路径:codex/skills → ../claude/skills
+            // 相对路径:.codex/skills → ../.claude/skills
             // createSymlink 内部会基于 link 父目录自动解析这个相对路径
-            if (tool.createSymlink('../claude/skills', 'codex/skills')) {
-                logger.log('✅ codex/skills 软链接已创建');
-                vscode.window.showInformationMessage('✅ codex/skills 软链接已创建');
+            if (tool.createSymlink('../.claude/skills', '.codex/skills')) {
+                logger.log('✅ .codex/skills 软链接已创建');
+                vscode.window.showInformationMessage('✅ .codex/skills 软链接已创建');
                 return 'ok';
             }
-            logger.error('codex/skills 软链接创建失败');
+            logger.error('.codex/skills 软链接创建失败');
             logger.log('Windows 提示:请开启"开发者模式"(设置→隐私和安全→开发者选项),或以管理员身份运行 VS Code');
-            logger.log('或改用复制替代软链接:xcopy /E /I /Y claude\\skills codex\\skills');
+            logger.log('或改用复制替代软链接:xcopy /E /I /Y .claude\\skills .codex\\skills');
             return 'failed';
         },
     };

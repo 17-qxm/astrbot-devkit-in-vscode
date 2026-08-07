@@ -118,6 +118,14 @@ export async function reloadPlugin(client: AstrBotClient, pluginId: string): Pro
     );
 }
 
+/** DELETE /api/v1/plugins/{id} — 删除插件(同名冲突时先删后装) */
+export async function deletePlugin(client: AstrBotClient, pluginId: string): Promise<void> {
+    await client.request<unknown>(
+        `/api/v1/plugins/${encodeURIComponent(pluginId)}`,
+        { method: 'DELETE' },
+    );
+}
+
 /** POST /api/v1/plugins/install/github — 从 GitHub 安装 */
 export async function installPluginFromGithub(
     client: AstrBotClient, repository: string,
@@ -146,7 +154,7 @@ export async function uploadPluginZip(
 }
 
 /**
- * 按 name 匹配插件 id(用于 configEditor / debugSession)。
+ * 按 name 匹配插件 id(用于 configEditor / debugAdapter)。
  * 优先精确匹配 name,其次匹配 id。
  */
 export async function resolvePluginId(

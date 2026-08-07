@@ -5,7 +5,6 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as crypto from 'crypto';
 import { parse } from 'yaml';
 import * as logger from './logger.js';
 import {
@@ -20,7 +19,8 @@ import {
 export interface DebugSettings {
     stopAction: 'ask' | 'disable' | 'keep';
     reloadAfterPush: 'ask' | 'always' | 'never';
-    ruffFix: boolean;
+    /** 是否接收并显示服务器日志(侧边栏「接收服务器日志」开关) */
+    receiveLogs: boolean;
     reconnectLimit: number;
 }
 
@@ -39,8 +39,8 @@ export interface DevKitConfig {
     astrbotServer: string;
     /** OpenAPI API Key(abk_ 开头) */
     astrbotAPIkey: string;
-    /** 日志投射插件密钥;扩展自动生成,留空则日志不可用 */
-    logleakKey?: string;
+    /** 启动时是否自动连接/拉取服务器(侧边栏可切换) */
+    autoConnect?: boolean;
     debug: DebugSettings;
     pluginWorkspaces?: PluginWorkspace[];
 }
@@ -57,7 +57,7 @@ export interface PluginCandidate {
 export const DEFAULT_DEBUG: DebugSettings = {
     stopAction: 'ask',
     reloadAfterPush: 'ask',
-    ruffFix: false,
+    receiveLogs: true,
     reconnectLimit: 5,
 };
 
@@ -66,7 +66,6 @@ const TEMPLATE_CONFIG: DevKitConfig = {
     version: CONFIG_VERSION,
     astrbotServer: '127.0.0.1:6185',
     astrbotAPIkey: '',
-    logleakKey: '',
     debug: { ...DEFAULT_DEBUG },
     pluginWorkspaces: [],
 };
@@ -108,7 +107,6 @@ export function toRelativePosix(absPath: string): string | undefined {
 function readJsonc(filePath: string): unknown | undefined {
     try {
         const text = fs.readFileSync(filePath, 'utf8');
-        // 简易去注释/尾逗号(jsonc-parser 也可,但这里手写避免强依赖语义差异)
         const clean = stripJsonc(text);
         return JSON.parse(clean);
     } catch {
@@ -116,28 +114,38 @@ function readJsonc(filePath: string): unknown | undefined {
     }
 }
 
-/** 去掉行注释、块注释和尾逗号,便于 JSON.parse(容忍 jsonc 容错) */
+/**
+ * 去除 JSONC 的注释与尾逗号,返回可被 JSON.parse 的纯 JSON。
+ * 用状态机正确处理字符串(含转义)与注释,不会误伤字符串内容。
+ * (注:不依赖 jsonc-parser——其 UMD 构建无法被 esbuild 正确打包)
+ */
 function stripJsonc(text: string): string {
     let out = '';
+    let inString = false;
+    let quote = '';
+    let escaped = false;
     let i = 0;
-    let inStr: '"' | "'" | null = null;
     while (i < text.length) {
         const ch = text[i];
         const next = text[i + 1];
-        // 字符串内:原样输出直到闭合引号(忽略转义外的引号)
-        if (inStr) {
+
+        // 字符串内:原样输出,处理转义与闭合引号
+        if (inString) {
             out += ch;
-            if (ch === '\\') {
-                out += next ?? '';
-                i += 2;
-                continue;
+            if (escaped) {
+                escaped = false;
+            } else if (ch === '\\') {
+                escaped = true;
+            } else if (ch === quote) {
+                inString = false;
             }
-            if (ch === inStr) {inStr = null;}
             i++;
             continue;
         }
+        // 字符串开始(JSON 标准只允许双引号,这里容忍单引号)
         if (ch === '"' || ch === "'") {
-            inStr = ch;
+            inString = true;
+            quote = ch;
             out += ch;
             i++;
             continue;
@@ -154,11 +162,19 @@ function stripJsonc(text: string): string {
             i += 2;
             continue;
         }
+        // 尾逗号:逗号后(跳过空白)是 } 或 ] 时不输出(仅在字符串外判断)
+        if (ch === ',') {
+            let j = i + 1;
+            while (j < text.length && /\s/.test(text[j])) {j++;}
+            if (text[j] === '}' || text[j] === ']') {
+                i++;
+                continue;
+            }
+        }
         out += ch;
         i++;
     }
-    // 去尾逗号:}, ] 前的逗号
-    return out.replace(/,\s*([\]}])/g, '$1');
+    return out;
 }
 
 /**
@@ -186,7 +202,7 @@ export function normalizeConfig(raw: unknown): DevKitConfig {
     const debug: DebugSettings = {
         stopAction: asEnum(debugRaw.stopAction, ['ask', 'disable', 'keep'], DEFAULT_DEBUG.stopAction),
         reloadAfterPush: asEnum(debugRaw.reloadAfterPush, ['ask', 'always', 'never'], DEFAULT_DEBUG.reloadAfterPush),
-        ruffFix: typeof debugRaw.ruffFix === 'boolean' ? debugRaw.ruffFix : DEFAULT_DEBUG.ruffFix,
+        receiveLogs: typeof debugRaw.receiveLogs === 'boolean' ? debugRaw.receiveLogs : DEFAULT_DEBUG.receiveLogs,
         reconnectLimit: typeof debugRaw.reconnectLimit === 'number' ? debugRaw.reconnectLimit : DEFAULT_DEBUG.reconnectLimit,
     };
     const ws = Array.isArray(obj.pluginWorkspaces) ? (obj.pluginWorkspaces as unknown[])
@@ -203,7 +219,7 @@ export function normalizeConfig(raw: unknown): DevKitConfig {
         version: CONFIG_VERSION,
         astrbotServer: typeof obj.astrbotServer === 'string' ? obj.astrbotServer : '',
         astrbotAPIkey: typeof obj.astrbotAPIkey === 'string' ? obj.astrbotAPIkey : '',
-        logleakKey: typeof obj.logleakKey === 'string' ? obj.logleakKey : '',
+        autoConnect: typeof obj.autoConnect === 'boolean' ? obj.autoConnect : true,
         debug,
         pluginWorkspaces: ws,
     };
@@ -331,13 +347,6 @@ export function watchConfig(cb: () => void): vscode.Disposable {
         if (timer) {clearTimeout(timer);}
         watchers.forEach(w => { try { w.close(); } catch {} });
     });
-}
-
-// ─── 密钥 ────────────────────────────────────────────────
-
-/** 生成随机 logleakKey(24 字节十六进制) */
-export function generateKey(): string {
-    return crypto.randomBytes(24).toString('hex');
 }
 
 // ─── 插件检索 ────────────────────────────────────────────

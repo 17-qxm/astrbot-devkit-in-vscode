@@ -9,11 +9,14 @@
     "astrbot-devkit.AddWorkspace": "Add Plugin Workspace",
     "astrbot-devkit.ScanPlugins": "Scan Workspace for Plugins",
     "astrbot-devkit.SetActivePlugin": "Set Active Plugin",
-    "astrbot-devkit.Debug": "Debug (Push & Watch Logs)",
+    "astrbot-devkit.Debug": "Push Plugin to AstrBot Server and Watch Logs",
     "astrbot-devkit.StopDebug": "Stop Debugging",
     "astrbot-devkit.OpenPluginConfig": "Open Plugin Config",
     "astrbot-devkit.SavePluginConfig": "Push Plugin Config to Server",
     "astrbot-devkit.OpenServerLogs": "Open Server Logs",
     "astrbot-devkit.SendMessage": "Send Message to Platform",
-    "astrbot-devkit.ListServerPlugins": "List Server Plugins"
+    "astrbot-devkit.ListServerPlugins": "List Server Plugins",
+    "astrbot-devkit.ToggleAutoConnect": "Toggle Auto Connect Server",
+    "astrbot-devkit.EditStopAction": "Edit Post-Debug Plugin Action",
+    "astrbot-devkit.ToggleLogs": "Toggle Server Log Reception"
 }

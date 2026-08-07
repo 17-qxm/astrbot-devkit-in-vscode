@@ -8,7 +8,7 @@
 import * as vscode from 'vscode';
 import type { AstrBotClient } from '../api/client.js';
 import {
-    LOGLEAK_SSE_ROUTE, LOGLEAK_AUTH_HEADER,
+    LOGLEAK_SSE_ROUTE,
     SSE_IDLE_TIMEOUT_MS, SSE_RECONNECT_BACKOFF_MS, OUTPUT_CHANNEL_SERVER,
 } from '../constants.js';
 import * as logger from '../logger.js';
@@ -51,19 +51,11 @@ export class LogRelay {
 
     /**
      * 启动日志流:清空通道并弹出,连接 SSE。
-     * @returns true=已启动;false=因配置缺失未启动(logleakKey 为空或服务端插件未就绪)
+     * @returns true=已启动;false=连接失败(鉴权失败/插件未就绪)
      */
     async start(): Promise<boolean> {
         // 先停掉可能存在的旧会话
         this.stopInternal(false);
-
-        const key = this.client.config.logleakKey;
-        if (!key) {
-            this.channel.appendLine('⚠️ 未配置 logleakKey,服务器日志不可用(日志投射插件需安装并配对密钥)');
-            this.channel.show(true);
-            logger.error('logleakKey 为空,跳过日志流');
-            return false;
-        }
 
         this.running = true;
         this.reconnectCount = 0;
@@ -73,7 +65,7 @@ export class LogRelay {
         logger.log('启动 SSE 日志流');
 
         // 不 await:流是长连接,在后台跑直到 stop()
-        void this.connectLoop(key);
+        void this.connectLoop();
         return true;
     }
 
@@ -110,10 +102,10 @@ export class LogRelay {
     }
 
     /** 连接 + 自动重连循环 */
-    private async connectLoop(key: string): Promise<void> {
+    private async connectLoop(): Promise<void> {
         const limit = this.client.config.debug.reconnectLimit;
         while (this.running) {
-            const ok = await this.connectOnce(key);
+            const ok = await this.connectOnce();
             if (!this.running) {break;}
             if (ok) {
                 // 正常结束(服务端关闭):作为断线,继续重连
@@ -136,7 +128,7 @@ export class LogRelay {
     }
 
     /** 单次连接:返回是否成功建立了连接(收到过数据则算连接成功) */
-    private async connectOnce(key: string): Promise<boolean> {
+    private async connectOnce(): Promise<boolean> {
         const url = this.client.baseUrl + LOGLEAK_SSE_ROUTE;
         this.abort = new AbortController();
         let connected = false;
@@ -145,12 +137,18 @@ export class LogRelay {
                 method: 'GET',
                 headers: {
                     'Accept': 'text/event-stream',
-                    [LOGLEAK_AUTH_HEADER]: key,
+                    // v0.2.0 起:全局鉴权接管,只需 OpenAPI 的 Bearer key
+                    'Authorization': `Bearer ${this.client.config.astrbotAPIkey}`,
                 },
                 signal: this.abort.signal,
             });
             if (!resp.ok || !resp.body) {
-                this.channel.appendLine(`⚠️ 日志连接失败:HTTP ${resp.status} ${resp.statusText}`);
+                const hint = resp.status === 401
+                    ? 'AstrBot API Key(astrbotAPIkey)不匹配或缺失'
+                    : resp.status === 404
+                        ? '日志投射插件未安装或 AstrBot 版本过低(需 v4.24+)'
+                        : `HTTP ${resp.status} ${resp.statusText}`;
+                this.channel.appendLine(`⚠️ 日志连接失败:${hint}`);
                 return false;
             }
             this.resetIdleTimer();

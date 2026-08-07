@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import * as jsonc from 'jsonc-parser';
 import * as fs from 'fs';
 import * as path from 'path';
 import AdmZip from 'adm-zip';

@@ -38,11 +38,11 @@
             "default": ""
         },
 
-        "logleakKey": {
-            "type": "string",
-            "title": "Logleak 调试插件 Key",
-            "description": "日志投射插件的连接密钥。由扩展自动生成并写入,无需手动填写;留空时日志功能不可用",
-            "default": ""
+        "autoConnect": {
+            "type": "boolean",
+            "title": "自动连接服务器",
+            "description": "启动时是否自动连接/拉取 AstrBot 服务器信息,可在侧边栏切换",
+            "default": true
         },
 
         "debug": {
@@ -66,11 +66,11 @@
                     "enum": ["ask", "always", "never"],
                     "default": "ask"
                 },
-                "ruffFix": {
+                "receiveLogs": {
                     "type": "boolean",
-                    "title": "ruff 自动修复",
-                    "description": "F5 的 ruff 检查是否带 --fix 自动修复",
-                    "default": false
+                    "title": "接收服务器日志",
+                    "description": "是否接收并显示服务器日志,可在侧边栏「接收服务器日志」开关切换",
+                    "default": true
                 },
                 "reconnectLimit": {
                     "type": "number",

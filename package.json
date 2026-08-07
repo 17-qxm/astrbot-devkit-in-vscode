@@ -32,6 +32,11 @@
           "type": "tree",
           "id": "astrbot-devkit.main",
           "name": "AstrBot DevKit"
+        },
+        {
+          "type": "tree",
+          "id": "astrbot-devkit.local",
+          "name": "本地插件"
         }
       ]
     },
@@ -125,18 +130,51 @@
         "command": "astrbot-devkit.ListServerPlugins",
         "title": "%astrbot-devkit.ListServerPlugins%",
         "category": "AstrBot"
-      }
-    ],
-    "keybindings": [
-      {
-        "command": "astrbot-devkit.Debug",
-        "key": "f5",
-        "when": "astrbotDevkit.active && !astrbotDevkit.debugging"
       },
       {
-        "command": "astrbot-devkit.StopDebug",
-        "key": "shift+f5",
-        "when": "astrbotDevkit.debugging"
+        "command": "astrbot-devkit.ToggleAutoConnect",
+        "title": "%astrbot-devkit.ToggleAutoConnect%",
+        "category": "AstrBot"
+      },
+      {
+        "command": "astrbot-devkit.EditStopAction",
+        "title": "%astrbot-devkit.EditStopAction%",
+        "category": "AstrBot"
+      },
+      {
+        "command": "astrbot-devkit.ToggleLogs",
+        "title": "%astrbot-devkit.ToggleLogs%",
+        "category": "AstrBot"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "astrbot",
+        "label": "将插件推送至AstrBot服务器并观察",
+        "languages": [
+          "python"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "pluginName"
+            ],
+            "properties": {
+              "pluginName": {
+                "type": "string",
+                "description": "插件名(pluginWorkspaces 中的 name)"
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "astrbot",
+            "request": "launch",
+            "name": "将插件推送至AstrBot服务器并观察",
+            "pluginName": "${command:astrbot-devkit.GetActivePluginName}"
+          }
+        ]
       }
     ],
     "menus": {
@@ -196,6 +234,25 @@
         {
           "command": "astrbot-devkit.OpenServerLogs",
           "when": "view == astrbot-devkit.main && viewItem == devkitLogs"
+        },
+        {
+          "command": "astrbot-devkit.SetActivePlugin",
+          "when": "view == astrbot-devkit.local && viewItem == devkitLocalPlugin",
+          "group": "inline@1"
+        },
+        {
+          "command": "astrbot-devkit.Debug",
+          "when": "view == astrbot-devkit.local && viewItem == devkitLocalPluginActive && !astrbotDevkit.debugging",
+          "group": "inline@1"
+        },
+        {
+          "command": "astrbot-devkit.StopDebug",
+          "when": "view == astrbot-devkit.local && viewItem == devkitLocalPluginActive && astrbotDevkit.debugging",
+          "group": "inline@1"
+        },
+        {
+          "command": "astrbot-devkit.OpenPluginConfig",
+          "when": "view == astrbot-devkit.local && (viewItem == devkitLocalPlugin || viewItem == devkitLocalPluginActive)"
         }
       ],
       "commandPalette": [
@@ -257,7 +314,6 @@
   },
   "dependencies": {
     "adm-zip": "^0.6.0",
-    "jsonc-parser": "^3.3.1",
     "yaml": "^2.9.0"
   }
 }

@@ -9,11 +9,14 @@
     "astrbot-devkit.AddWorkspace": "添加插件工作区",
     "astrbot-devkit.ScanPlugins": "扫描工作区插件",
     "astrbot-devkit.SetActivePlugin": "设为活跃插件",
-    "astrbot-devkit.Debug": "调试(推送并观察日志)",
+    "astrbot-devkit.Debug": "将插件推送至AstrBot服务器并观察",
     "astrbot-devkit.StopDebug": "停止调试",
     "astrbot-devkit.OpenPluginConfig": "打开插件配置",
     "astrbot-devkit.SavePluginConfig": "推送插件配置到服务器",
     "astrbot-devkit.OpenServerLogs": "打开服务器日志",
     "astrbot-devkit.SendMessage": "向平台推送消息",
-    "astrbot-devkit.ListServerPlugins": "列出服务器插件"
+    "astrbot-devkit.ListServerPlugins": "列出服务器插件",
+    "astrbot-devkit.ToggleAutoConnect": "切换自动连接服务器",
+    "astrbot-devkit.EditStopAction": "编辑调试结束后插件处理",
+    "astrbot-devkit.ToggleLogs": "切换接收服务器日志"
 }
