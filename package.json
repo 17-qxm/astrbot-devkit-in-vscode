@@ -2,9 +2,10 @@
   "name": "astrbot-devkit-in-vscode",
   "displayName": "AstrBot DevKit In VSCode",
   "description": "Make AstrBot plugin programming more comfortable!",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "17qxm",
   "icon": "media/icon.png",
+  "repository":{"type": "github","url": "https://github.com/17-qxm/astrbot-devkit-in-vscode.git"},
   "engines": {
     "vscode": "^1.125.0"
   },
