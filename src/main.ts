@@ -11,6 +11,9 @@ const ASTRBOT_SKILL_REPO = 'xunxiing/AstrBot-Skill';
 /** 初始化步骤的执行结果 */
 type StepStatus = 'ok' | 'cancelled' | 'failed';
 
+/** InitEnv 的整体结果 */
+type InitResult = 'ok' | 'cancelled' | 'failed';
+
 /** 初始化步骤定义 */
 interface Step {
     /** 步骤标题,用作输出面板分隔线;可以是函数(依赖上下文动态生成) */
@@ -33,60 +36,98 @@ interface Step {
 interface InitContext {
     /** Python 可执行文件路径(按平台区分) */
     pyExe: string;
-    /** 用户输入的插件名(step 4 写入,step 5 消费) */
+    /** 用户输入的插件名(预收集阶段写入,模板下载/git init 消费) */
     pluginName?: string;
 }
+
+/** 一条步骤链:链内步骤串行执行,链与链之间可并行 */
+type StepChain = Step[];
 
 /**
  * 初始化插件编辑环境,流程由若干独立步骤组成。每个步骤:
  *   - 先判断环境是否已就绪(幂等),已就绪则跳过,不会重复执行;
  *   - 失败时统一弹错误通知并中止(软链接步骤除外,失败仅提示后继续)。
  *
- * 步骤:
- * 1. 选择 `uv` 或 `venv` 创建虚拟环境
- * 2. 安装 `astrbot`(已安装的跳过)
- * 3. 下载 `xunxiing/AstrBot-Skill` 最新 release 到 `./.claude/skills/`,
- *    并创建 `./.codex/skills` → `../.claude/skills` 软链接
- * 4. 下载 `Soulter/helloworld` 模板源码到 `./{插件名}`
- * 5. 为 `./{插件名}` 初始化本地 git 仓库
+ * 执行方式:
+ * 1. 预收集用户输入(虚拟环境创建方式、插件名),避免并行阶段弹多个输入框;
+ * 2. 三条步骤链并行执行(链内串行),全程通过进度通知展示当前进度:
+ *    A. 创建虚拟环境 → 更新 pip → 安装依赖
+ *    B. 下载 AstrBot-Skill → 创建 .codex/skills 软链接
+ *    C. 下载 helloworld 模板 → git init
+ * 3. 全部结束后统一汇总:任一 fatal 步骤失败则整体标记失败。
  *
- * TODO: 原计划中的步骤 6「写 .vscode/astrbot-devkit-config.json」尚未实现。
+ * TODO: 原计划中的「写 .vscode/astrbot-devkit-config.json」步骤尚未实现。
  */
 export async function InitEnv() {
     logger.clear();
     logger.separator('InitEnv 开始');
     logger.log('🚀 正在准备初始化环境');
-    vscode.window.showInformationMessage('🚀 正在准备初始化环境');
 
-    const ctx: InitContext = {
-        pyExe: process.platform === 'win32'
-            ? '.venv\\Scripts\\python.exe'
-            : '.venv/bin/python',
-    };
+    // 进度通知贯穿整个初始化过程,直到全部步骤结束
+    const result: InitResult = await vscode.window.withProgress(
+        {
+            location: vscode.ProgressLocation.Notification,
+            title: '🚀 AstrBot DevKit 正在初始化环境',
+            cancellable: false,
+        },
+        async (progress) => {
+            // ── 1. 预收集输入:避免并行阶段同时弹多个输入框 ──
+            progress.report({ message: '收集配置...' });
+            const venvTool = await askVenvTool();
+            if (!venvTool) {
+                return 'cancelled';
+            }
 
-    const steps: Step[] = [
-        stepCreateVenv(),
-        stepInstallDeps(),
-        stepDownloadSkill(),
-        stepCreateSymlink(),
-        stepDownloadTemplate(),
-        stepGitInit(),
-    ];
+            const pluginName = await askPluginName();
+            const ctx: InitContext = {
+                pyExe: process.platform === 'win32'
+                    ? '.venv\\Scripts\\python.exe'
+                    : '.venv/bin/python',
+                pluginName,
+            };
 
-    for (const step of steps) {
-        const status = await runStep(step, ctx);
-        if (status === 'failed') {
-            logger.log('⛔ InitEnv 中止(错误详情见上方输出)');
-            return;
-        }
-        if (status === 'cancelled') {
+            // ── 2. 三条步骤链并行执行(链内串行) ──
+            const chains: StepChain[] = [
+                [stepCreateVenv(venvTool), stepUpdatePip(), stepInstallDeps()],
+                [stepDownloadSkill(), stepCreateSymlink()],
+                [stepDownloadTemplate(), stepGitInit()],
+            ];
+            const totalSteps = chains.reduce((n, c) => n + c.length, 0);
+            let completed = 0;
+
+            const results = await Promise.all(
+                chains.map(chain => runChain(chain, ctx, () => {
+                    completed += 1;
+                    progress.report({
+                        increment: 100 / totalSteps,
+                        message: `(${completed}/${totalSteps})`,
+                    });
+                })),
+            );
+
+            return results.every(Boolean) ? 'ok' : 'failed';
+        },
+    );
+
+    switch (result) {
+        case 'ok':
+            logger.separator('InitEnv 完成');
+            logger.log('✅ InitEnv 完成');
+            // 最后检查一下工作区
+            WorkspaceCheck();
+            break;
+        case 'cancelled':
             logger.log('用户取消,InitEnv 中止');
-            return;
-        }
+            break;
+        case 'failed':
+            logger.log('⛔ InitEnv 结束(存在失败步骤,详情见上方输出)');
+            break;
     }
+}
 
-    // 最后检查一下工作区
-    WorkspaceCheck();
+/** 解析步骤标题(支持函数式标题) */
+function stepTitle(step: Step, ctx: InitContext): string {
+    return typeof step.title === 'function' ? step.title(ctx) : step.title;
 }
 
 /**
@@ -95,7 +136,7 @@ export async function InitEnv() {
  * @returns 'ok' 表示本步完成(含跳过);'cancelled'/'failed' 由调用方决定是否中止
  */
 async function runStep(step: Step, ctx: InitContext): Promise<StepStatus> {
-    const title = typeof step.title === 'function' ? step.title(ctx) : step.title;
+    const title = stepTitle(step, ctx);
     logger.separator(title);
 
     // 幂等判断:环境已就绪则跳过
@@ -132,9 +173,59 @@ async function runStep(step: Step, ctx: InitContext): Promise<StepStatus> {
     return 'failed';
 }
 
+/**
+ * 串行执行一条步骤链,每完成一步调用 onStepDone 上报进度
+ *
+ * @returns true 表示链内所有步骤都成功(含跳过/非致命失败)
+ */
+async function runChain(
+    chain: StepChain,
+    ctx: InitContext,
+    onStepDone?: () => void,
+): Promise<boolean> {
+    for (const step of chain) {
+        let status: StepStatus;
+        try {
+            status = await runStep(step, ctx);
+        } catch (e: any) {
+            logger.error(`步骤内部异常: ${stepTitle(step, ctx)}${e?.message ? ` (${e.message})` : ''}`);
+            return false;
+        }
+        onStepDone?.();
+        if (status !== 'ok') {
+            return false;
+        }
+    }
+    return true;
+}
+
 // ─── step 1:创建虚拟环境 ─────────────────────────────────
 
-function stepCreateVenv(): Step {
+/**
+ * 询问用户用 `uv` 还是 `venv` 创建虚拟环境
+ *
+ * @returns 用户的选择;按 Esc 取消返回 undefined
+ */
+async function askVenvTool(): Promise<'uv' | 'venv' | undefined> {
+    const choice = await vscode.window.showQuickPick(
+        [
+            { label: 'uv', description: '📦 使用 uv 创建虚拟环境', detail: '推荐，但需先安装 uv' },
+            { label: 'venv', description: '🐍 使用 venv 创建虚拟环境', detail: '兼容性最好，但速度较慢' },
+        ],
+        {
+            placeHolder: '选择虚拟环境创建方式',
+            title: '🚀 AstrBot DevKit - 初始化环境',
+            ignoreFocusOut: true,
+        },
+    );
+    if (!choice) {
+        return undefined;
+    }
+    logger.log(`用户选择: ${choice.label}`);
+    return choice.label === 'uv' ? 'uv' : 'venv';
+}
+
+function stepCreateVenv(method: 'uv' | 'venv'): Step {
     return {
         title: 'step 1: 创建虚拟环境',
         skipIfDone: () => tool.exists('.venv/'),
@@ -142,25 +233,8 @@ function stepCreateVenv(): Step {
         doneMessage: '✅ 已经检测到虚拟环境！',
         failMessage: '虚拟环境创建失败',
         run: async () => {
-            const choice = await vscode.window.showQuickPick(
-                [
-                    { label: 'uv', description: '📦 使用 uv 创建虚拟环境', detail: '推荐，但需先安装 uv' },
-                    { label: 'venv', description: '🐍 使用 venv 创建虚拟环境', detail: '兼容性最好，但速度较慢' },
-                ],
-                {
-                    placeHolder: '选择虚拟环境创建方式',
-                    title: '🚀 AstrBot DevKit - 初始化环境',
-                    ignoreFocusOut: true,
-                },
-            );
-            // 用户按 Esc 取消
-            if (!choice) {
-                return 'cancelled';
-            }
-            logger.log(`用户选择: ${choice.label}`);
-
             // captureOutput:失败时把 uv/venv 的报错打到输出面板,方便排查
-            const ok = choice.label === 'uv'
+            const ok = method === 'uv'
                 ? tool.run('uv venv', { captureOutput: true })
                 : tool.run('python -m venv .venv', { captureOutput: true });
 
@@ -175,11 +249,48 @@ function stepCreateVenv(): Step {
     };
 }
 
-// ─── step 2:安装 Python 依赖 ─────────────────────────────
+// ─── step 2:更新虚拟环境 pip ─────────────────────────────
+
+function stepUpdatePip(): Step {
+    return {
+        title: 'step 2: 更新虚拟环境 pip',
+        // pip 更新失败不中止流程:依赖安装步骤会再次暴露问题,
+        // 避免因网络抖动导致整个初始化流程卡死
+        fatal: false,
+        failMessage: '虚拟环境 pip 更新失败',
+        run: async (ctx) => {
+            // uv venv 默认不内置 pip,先探测;没有 pip 时退回 uv pip install
+            // (它会顺手把 pip 装进虚拟环境)
+            if (tool.run(`"${ctx.pyExe}" -m pip --version`)) {
+                logger.log('检测到 pip,执行升级: python -m pip install --upgrade pip');
+                const ok = tool.run(`"${ctx.pyExe}" -m pip install --upgrade pip`, { captureOutput: true });
+                if (ok) {
+                    logger.log('✅ 虚拟环境 pip 已更新');
+                    vscode.window.showInformationMessage('✅ 虚拟环境 pip 已更新');
+                    return 'ok';
+                }
+                logger.error('虚拟环境 pip 更新失败');
+                return 'failed';
+            }
+
+            logger.log('虚拟环境未内置 pip(uv venv),改用 uv pip 安装并更新 pip');
+            const ok = tool.run('uv pip install --upgrade pip', { captureOutput: true });
+            if (ok) {
+                logger.log('✅ 已通过 uv 安装/更新 pip');
+                vscode.window.showInformationMessage('✅ 虚拟环境 pip 已更新');
+                return 'ok';
+            }
+            logger.error('uv pip 安装/更新 pip 失败(请确认已安装 uv)');
+            return 'failed';
+        },
+    };
+}
+
+// ─── step 3:安装 Python 依赖 ─────────────────────────────
 
 function stepInstallDeps(): Step {
     const step: Step = {
-        title: 'step 2: 安装 Python 依赖',
+        title: 'step 3: 安装 Python 依赖',
         failMessage: '安装 Python 依赖失败',
         run: async (ctx) => {
             logger.log(`Python: ${ctx.pyExe}`);
@@ -234,11 +345,11 @@ function stepInstallDeps(): Step {
     return step;
 }
 
-// ─── step 3:下载 AstrBot-Skill ───────────────────────────
+// ─── step 4:下载 AstrBot-Skill ───────────────────────────
 
 function stepDownloadSkill(): Step {
     return {
-        title: 'step 3: 下载 AstrBot-Skill',
+        title: 'step 4: 下载 AstrBot-Skill',
         skipIfDone: () => tool.exists('.claude/skills/AstrBot-Skill/'),
         skipMessage: '已检测到 .claude/skills/AstrBot-Skill,跳过下载',
         doneMessage: '✅ AstrBot-Skill 已存在',
@@ -288,8 +399,8 @@ function stepDownloadSkill(): Step {
                         return false;
                     }
                     logger.log(`嵌套子目录: ${subdirs[0]}`);
-        logger.log('移动 → .claude/skills/AstrBot-Skill');
-        if (!tool.move(`${tmpExtract}/${subdirs[0]}`, '.claude/skills/AstrBot-Skill')) {
+                    logger.log('移动 → .claude/skills/AstrBot-Skill');
+                    if (!tool.move(`${tmpExtract}/${subdirs[0]}`, '.claude/skills/AstrBot-Skill')) {
                         logger.error('整理 AstrBot-Skill 目录失败');
                         return false;
                     }
@@ -312,11 +423,11 @@ function stepDownloadSkill(): Step {
     };
 }
 
-    // ─── step 3.1:创建 .codex/skills 软链接 ───────────────────
+    // ─── step 4.1:创建 .codex/skills 软链接 ───────────────────
 
 function stepCreateSymlink(): Step {
     return {
-        title: 'step 3.1: 创建 .codex/skills 软链接',
+        title: 'step 4.1: 创建 .codex/skills 软链接',
         // 独立幂等判断:软链接已存在即跳过
         // (即使 .claude/skills 之前已下载,首次软链接失败后重跑也能补上)
         skipIfDone: () => tool.exists('.codex/skills/'),
@@ -340,21 +451,20 @@ function stepCreateSymlink(): Step {
     };
 }
 
-// ─── step 4:下载 helloworld 模板 ─────────────────────────
+// ─── step 5:下载 helloworld 模板 ─────────────────────────
 
 function stepDownloadTemplate(): Step {
     return {
-        title: 'step 4: 下载 helloworld 模板',
+        title: 'step 5: 下载 helloworld 模板',
         failMessage: 'helloworld 模板下载失败',
         run: async (ctx) => {
-            const pluginName = await askPluginName();
+            const pluginName = ctx.pluginName;
             if (!pluginName) {
-                logger.log('用户取消输入插件名,跳过 step 4-5');
+                logger.log('用户取消输入插件名,跳过模板下载与 git init');
                 vscode.window.showInformationMessage('已跳过插件模板下载(未输入插件名)');
                 // 视为"完成":流程继续,后续 git init 步骤会因 pluginName 为空而自动跳过
                 return 'ok';
             }
-            ctx.pluginName = pluginName;
             logger.log(`插件名: ${pluginName}`);
 
             const tmpZip = '.tmp/helloworld.zip';
@@ -462,11 +572,11 @@ async function askPluginName(): Promise<string | undefined> {
     }
 }
 
-// ─── step 5:git init ─────────────────────────────────────
+// ─── step 6:git init ─────────────────────────────────────
 
 function stepGitInit(): Step {
     const step: Step = {
-        title: ctx => ctx.pluginName ? `step 5: git init ./${ctx.pluginName}/` : 'step 5: git init',
+        title: ctx => ctx.pluginName ? `step 6: git init ./${ctx.pluginName}/` : 'step 6: git init',
         skipIfDone: ctx => !ctx.pluginName || tool.exists(`${ctx.pluginName}/.git/`),
         skipMessage: ctx => ctx.pluginName
             ? `./${ctx.pluginName}/.git 已存在,跳过 git init`
