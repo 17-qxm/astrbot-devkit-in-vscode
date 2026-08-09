@@ -13,6 +13,10 @@ import {
 import {
     pushPluginConfig,
 } from '../views/configEditor.js';
+import {
+    reloadPlugin, setPluginEnabled, resolvePluginId, listPlugins,
+} from '../api/plugins.js';
+import { describeApiError } from '../api/client.js';
 import type { AppContext } from '../context.js';
 import type { CommandDef } from './registry.js';
 import { workspaceFromArg } from './shared.js';
@@ -120,6 +124,56 @@ export function pluginCommands(app: AppContext): CommandDef[] {
                     return;
                 }
                 await pushPluginConfig(app.client!, editor);
+            },
+        },
+
+        // ── 重载插件(仅已推送可用)──
+        {
+            id: 'astrbot-devkit.ReloadPlugin',
+            handler: async (arg: unknown) => {
+                if (!app.ensureClient()) {return;}
+                const ws = workspaceFromArg(arg) ?? getActiveWorkspace(getConfig());
+                if (!ws) {return;}
+                const client = app.client!;
+                const pluginId = await resolvePluginId(client, ws.name);
+                if (!pluginId) {
+                    vscode.window.showWarningMessage(`${ws.name} 尚未推送,无法重载`);
+                    return;
+                }
+                try {
+                    await reloadPlugin(client, pluginId);
+                    vscode.window.showInformationMessage(`✅ ${ws.name} 已重载`);
+                    await app.refreshServerPlugins();
+                } catch (e) {
+                    vscode.window.showErrorMessage(`重载失败:${describeApiError(e)}`);
+                }
+            },
+        },
+
+        // ── 启用/禁用插件(切换服务器端状态)──
+        {
+            id: 'astrbot-devkit.TogglePluginEnabled',
+            handler: async (arg: unknown) => {
+                if (!app.ensureClient()) {return;}
+                const ws = workspaceFromArg(arg) ?? getActiveWorkspace(getConfig());
+                if (!ws) {return;}
+                const client = app.client!;
+                const pluginId = await resolvePluginId(client, ws.name);
+                if (!pluginId) {
+                    vscode.window.showWarningMessage(`${ws.name} 尚未推送,无法切换启用状态`);
+                    return;
+                }
+                // 读当前 enabled:从服务器插件列表取当前状态后翻转
+                const list = await listPlugins(client, { includeReserved: true });
+                const cur = list.find(p => p.name === ws.name || p.id === ws.name);
+                const next = !(cur?.enabled !== false);
+                try {
+                    await setPluginEnabled(client, pluginId, next);
+                    vscode.window.showInformationMessage(`${ws.name} 已${next ? '启用' : '禁用'}`);
+                    await app.refreshServerPlugins();
+                } catch (e) {
+                    vscode.window.showErrorMessage(`切换失败:${describeApiError(e)}`);
+                }
             },
         },
     ];

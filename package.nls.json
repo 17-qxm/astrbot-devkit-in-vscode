@@ -18,5 +18,7 @@
     "astrbot-devkit.ListServerPlugins": "List Server Plugins",
     "astrbot-devkit.ToggleAutoConnect": "Toggle Auto Connect Server",
     "astrbot-devkit.EditStopAction": "Edit Post-Debug Plugin Action",
-    "astrbot-devkit.ToggleLogs": "Toggle Server Log Reception"
+    "astrbot-devkit.ToggleLogs": "Toggle Server Log Reception",
+    "astrbot-devkit.ReloadPlugin": "Reload Plugin",
+    "astrbot-devkit.TogglePluginEnabled": "Toggle Plugin Enabled"
 }

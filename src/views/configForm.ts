@@ -1,6 +1,6 @@
 // src/views/configForm.ts
 // 插件配置的 Webview 表单编辑器:host 端。
-// 拉 config + schema → 开 webview panel → postMessage 收发 → 校验 + 保存 + 询问 reload。
+// schema 优先读本地 _conf_schema.json(未推送也能编辑);config 已推送→服务器,未推送→default 预填。
 // 校验复用 configEditor.ts 的 validateConfigValue;保存复用 savePluginConfig。
 // 表单 HTML 由 configFormHtml.ts 生成,主题跟随 VS Code(--vscode-* 变量)。
 
@@ -8,45 +8,32 @@ import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import type { AstrBotClient } from '../api/client.js';
 import { describeApiError } from '../api/client.js';
-import {
-    getPluginConfig, getPluginConfigSchema, savePluginConfig, resolvePluginId,
-    type ConfigSchema,
-} from '../api/plugins.js';
+import { savePluginConfig, type ConfigSchema } from '../api/plugins.js';
 import type { PluginWorkspace } from '../config/index.js';
 import * as logger from '../logger.js';
 import { configFormHtml } from './configFormHtml.js';
-import { validateConfigValue, askReloadAfterPush, openPluginConfig } from './configEditor.js';
+import {
+    validateConfigValue, askReloadAfterPush, openPluginConfig, resolveSchemaAndConfig,
+} from './configEditor.js';
 
 /**
  * 打开某插件的配置表单(webview)。默认入口,失败时回退提示。
- * 流程:resolvePluginId → 并行拉 config + schema → 开 panel → 收消息保存。
+ * 流程:resolveSchemaAndConfig(schema 优先本地,未推送用 default 预填)→ 开 panel → 收消息保存。
+ * 未推送插件也能打开编辑,但保存时会被拦截(提示先 F5 推送)。
  */
 export async function openPluginConfigForm(
     client: AstrBotClient, workspace: PluginWorkspace,
 ): Promise<void> {
     logger.separator(`打开配置表单:${workspace.name}`);
-    logger.log(`匹配 pluginId…`);
-    const pluginId = await resolvePluginId(client, workspace.name);
-    if (!pluginId) {
-        vscode.window.showErrorMessage(
-            `服务器上未找到插件「${workspace.name}」,请先推送(F5)后再编辑配置`,
-        );
-        return;
-    }
-    logger.log(`pluginId = ${pluginId}`);
-
-    logger.log(`拉取 config + schema…`);
-    let config: Record<string, unknown>;
-    let schema: ConfigSchema;
+    let resolved;
     try {
-        [config, schema] = await Promise.all([
-            getPluginConfig(client, pluginId),
-            getPluginConfigSchema(client, pluginId),
-        ]);
+        resolved = await resolveSchemaAndConfig(client, workspace);
     } catch (e) {
         vscode.window.showErrorMessage(`拉取配置失败:${describeApiError(e)}`);
         return;
     }
+    const { pluginId, schema, config } = resolved;
+    logger.log(`pluginId = ${pluginId ?? '(未推送,使用本地 schema + default 预填)'}`);
 
     const nonce = crypto.randomBytes(16).toString('base64');
     const panel = vscode.window.createWebviewPanel(
@@ -61,12 +48,20 @@ export async function openPluginConfigForm(
 
     panel.webview.html = configFormHtml({
         pluginName: workspace.name,
-        pluginId,
+        pluginId: pluginId ?? '',
         config,
         schema,
         nonce,
         cspSource: panel.webview.cspSource,
     });
+
+    // 未推送:在表单顶部提示
+    if (!pluginId) {
+        void panel.webview.postMessage({
+            type: 'info',
+            message: `${workspace.name} 尚未推送到服务器,当前为本地 schema 预填的默认配置。保存时会被拦截,请先 F5 推送。`,
+        });
+    }
 
     let disposed = false;
     panel.onDidDispose(() => { disposed = true; });
@@ -91,11 +86,20 @@ export async function openPluginConfigForm(
 async function onSave(
     panel: vscode.WebviewPanel,
     client: AstrBotClient,
-    pluginId: string,
+    pluginId: string | undefined,
     pluginName: string,
     schema: ConfigSchema,
     value: unknown,
 ): Promise<void> {
+    // 0. 未推送拦截
+    if (!pluginId) {
+        void panel.webview.postMessage({
+            type: 'error',
+            message: `${pluginName} 尚未推送到服务器,无法保存。请先 F5 推送插件。`,
+        });
+        return;
+    }
+
     // 1. 轻量校验(复用 configEditor 的规则)
     const errors = validateConfigValue(schema, value);
     if (errors.length > 0) {

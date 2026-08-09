@@ -1,5 +1,5 @@
 // src/context.ts
-// AppContext:扩展共享状态(tree/localTree/client/relay)与生命周期的显式容器。
+// AppContext:扩展共享状态(tree/client/relay)与生命周期的显式容器。
 // 由原 extension.ts 模块级单例收敛而来,行为不变。
 
 import * as vscode from 'vscode';
@@ -11,9 +11,9 @@ import {
 import {
     createClient, type AstrBotClient,
 } from './api/client.js';
+import { listPlugins } from './api/plugins.js';
 import { LogRelay } from './logs/relay.js';
 import { DevkitTreeProvider } from './views/devkitTree.js';
-import { DevkitLocalProvider } from './views/localTree.js';
 
 /** 提示配置缺失,并提供「创建配置」引导按钮 */
 export function promptCreateConfig(message: string, actionLabel: string): void {
@@ -23,7 +23,6 @@ export function promptCreateConfig(message: string, actionLabel: string): void {
 
 export class AppContext {
     readonly tree: DevkitTreeProvider;
-    readonly localTree: DevkitLocalProvider;
     private _client: AstrBotClient | undefined;
     private _relay: LogRelay | undefined;
     /** 当前 client 对应的连接相关配置快照(server|key),用于判断是否需要重建 */
@@ -31,7 +30,6 @@ export class AppContext {
 
     constructor() {
         this.tree = new DevkitTreeProvider();
-        this.localTree = new DevkitLocalProvider();
     }
 
     get client(): AstrBotClient | undefined { return this._client; }
@@ -49,7 +47,6 @@ export class AppContext {
         vscode.commands.executeCommand('setContext', 'astrbotDevkit.active', !!active);
         vscode.commands.executeCommand('setContext', 'astrbotDevkit.activePlugin', active?.name ?? '');
         this.tree.refresh();
-        this.localTree.refresh();
     }
 
     /** 重建 client(配置变化时调用) */
@@ -67,11 +64,29 @@ export class AppContext {
         }
         this._client = createClient(config, state => {
             this.tree.setConnectionState(state, config.astrbotServer);
+            // 连接成功 → 拉取服务器插件列表(用于侧边栏已推送/已启用状态)
+            if (state === 'connected') {
+                void this.refreshServerPlugins();
+            }
         });
         this._clientConfigKey = configKey(config);
         this._relay = new LogRelay(this._client);
         // 初始状态:已配置但未连接
         this.tree.setConnectionState('unconfigured', config.astrbotServer);
+    }
+
+    /** 拉取服务器已安装插件列表 → 缓存到 tree(连接成功/刷新/操作后调用) */
+    async refreshServerPlugins(): Promise<void> {
+        const client = this._client;
+        if (!client || client.state !== 'connected') {return;}
+        try {
+            const list = await listPlugins(client, { includeReserved: true });
+            if (this._client === client) {
+                this.tree.setServerPlugins(list);
+            }
+        } catch {
+            // 静默失败:状态刷新是辅助,不报错打扰用户
+        }
     }
 
     /** 当前 client 对应的连接相关配置快照(server|key) */

@@ -1,19 +1,29 @@
 // src/views/devkitTree.ts
-// 侧边栏 TreeDataProvider。焦点是本地 pluginWorkspaces,不展示服务器端已安装列表。
-// 见 implementation.md §6 与 design.md §7。
+// 侧边栏 TreeDataProvider(两层):服务器 + 插件(可展开为操作面板)+ 设置组 + 日志。
+// 状态来源:pluginWorkspaces → getConfig();连接/服务器插件状态 → setConnectionState/setServerPlugins。
+// 见 design.md §7 / implementation.md §6。
 
 import * as vscode from 'vscode';
 import type { ConnectionState } from '../api/client.js';
+import type { PluginInfo } from '../api/plugins.js';
 import type { PluginWorkspace } from '../config/index.js';
 import { getConfig } from '../config/index.js';
 
 // ─── 节点类型 ────────────────────────────────────────────
 
+/** 插件在服务器端的状态(pushed=已安装;enabled=启用) */
+export interface ServerPluginState {
+    pushed: boolean;
+    enabled: boolean;
+    pluginId?: string;
+}
+
 export type DevkitNode =
-    | { kind: 'root' }
     | { kind: 'server'; state: ConnectionState; address: string }
-    | { kind: 'workspace'; workspace: PluginWorkspace; active: boolean }
-    | { kind: 'pluginConfig'; workspace: PluginWorkspace }
+    | { kind: 'workspace'; workspace: PluginWorkspace; active: boolean; serverState: ServerPluginState | undefined }
+    | { kind: 'workspaceAction'; workspace: PluginWorkspace; action: 'config' | 'debug' | 'reload' }
+    | { kind: 'workspaceEnabled'; workspace: PluginWorkspace; enabled: boolean }
+    | { kind: 'settingsGroup' }
     | { kind: 'autoConnectToggle'; enabled: boolean }
     | { kind: 'stopAction'; action: 'ask' | 'disable' | 'keep' }
     | { kind: 'logs' }
@@ -28,17 +38,16 @@ export interface DevkitItem extends vscode.TreeItem {
 // ─── Provider ────────────────────────────────────────────
 
 /**
- * 侧边栏数据源。状态来源:
- *  - pluginWorkspaces → getConfig()
- *  - 连接状态 → setConnectionState() 由 extension 在 connect/探活后写入
- *  - debug 状态 → setDebugging() 由 vscode.debug 会话事件写入(extension.ts)
- *
- * 任一变化都调 refresh() 触发重绘。
+ * 侧边栏数据源(两层):
+ *  - 根:服务器 + 插件工作区(可折叠)+ 设置组 + 日志
+ *  - 插件节点展开:配置 / 调试 / 重载(仅已推送)/ 已启用开关(仅已推送)
+ *  - 设置组展开:自动连接 / 调试结束后 / 接收日志
  */
 export class DevkitTreeProvider implements vscode.TreeDataProvider<DevkitNode> {
     private _connection: ConnectionState = 'unconfigured';
     private _serverAddress = '';
     private _debugging = false;
+    private _serverPlugins: PluginInfo[] = [];
     private readonly _emitter = new vscode.EventEmitter<DevkitNode | undefined>();
     readonly onDidChangeTreeData = this._emitter.event;
 
@@ -49,7 +58,13 @@ export class DevkitTreeProvider implements vscode.TreeDataProvider<DevkitNode> {
         this.refresh();
     }
 
-/** 由 extension 在原生调试会话启停时调用(影响日志节点展示) */
+    /** 由 extension 设置服务器端插件列表(连接成功/刷新/操作后) */
+    setServerPlugins(list: PluginInfo[]): void {
+        this._serverPlugins = list;
+        this.refresh();
+    }
+
+    /** 由 extension 在原生调试会话启停时调用(影响日志节点展示) */
     setDebugging(debugging: boolean): void {
         this._debugging = debugging;
         this.refresh();
@@ -60,17 +75,100 @@ export class DevkitTreeProvider implements vscode.TreeDataProvider<DevkitNode> {
     }
 
     getTreeItem(element: DevkitNode): vscode.TreeItem {
-        const item = this.toTreeItem(element);
-        return item;
+        return this.toTreeItem(element);
     }
 
     getChildren(element?: DevkitNode): DevkitNode[] {
-        // 根 → 展开
-        if (!element) {
-            return this.rootChildren();
-        }
-        // 根节点本身不再有子项,层级保持扁平以提升可读性
+        if (!element) {return this.rootChildren();}
+        if (element.kind === 'workspace') {return this.workspaceChildren(element);}
+        if (element.kind === 'settingsGroup') {return this.settingsChildren();}
         return [];
+    }
+
+    // ─── 子项构造 ────────────────────────────────────────
+
+    /** 根 → 服务器 + 插件 + 设置组 + 日志 */
+    private rootChildren(): DevkitNode[] {
+        const children: DevkitNode[] = [];
+
+        // 1. 服务器节点(始终显示)
+        const config = getConfig();
+        const address = config?.astrbotServer ?? this._serverAddress;
+        children.push({ kind: 'server', state: this._connection, address });
+
+        // 未配置时,给创建入口
+        if (!config) {
+            children.push({
+                kind: 'placeholder',
+                message: '尚未配置 AstrBot 服务器',
+                command: 'astrbot-devkit.CreateConfig',
+            });
+            return children;
+        }
+
+        // 2. 插件工作区节点(可折叠,展开后是操作面板)
+        const workspaces = config.pluginWorkspaces ?? [];
+        if (workspaces.length === 0) {
+            children.push({
+                kind: 'placeholder',
+                message: '暂无插件工作区,点击添加或扫描',
+                command: 'astrbot-devkit.ScanPlugins',
+            });
+        } else {
+            for (const w of workspaces) {
+                children.push({
+                    kind: 'workspace',
+                    workspace: w,
+                    active: !!w.active,
+                    serverState: this.serverStateFor(w.name),
+                });
+            }
+        }
+
+        // 3. 设置分组(可折叠,默认折叠)
+        children.push({ kind: 'settingsGroup' });
+
+        // 4. 日志节点(始终显示)
+        children.push({ kind: 'logs' });
+
+        return children;
+    }
+
+    /** 插件 → 操作面板:配置 / 调试 / 重载(仅已推送)/ 已启用开关(仅已推送) */
+    private workspaceChildren(node: { workspace: PluginWorkspace; serverState: ServerPluginState | undefined }): DevkitNode[] {
+        const ws = node.workspace;
+        const pushed = !!node.serverState?.pushed;
+        const children: DevkitNode[] = [
+            { kind: 'workspaceAction', workspace: ws, action: 'config' },
+            { kind: 'workspaceAction', workspace: ws, action: 'debug' },
+        ];
+        if (pushed) {
+            children.push({ kind: 'workspaceAction', workspace: ws, action: 'reload' });
+            children.push({
+                kind: 'workspaceEnabled',
+                workspace: ws,
+                enabled: node.serverState?.enabled ?? true,
+            });
+        }
+        return children;
+    }
+
+    /** 设置组 → 自动连接 / 调试结束后 / 接收日志 */
+    private settingsChildren(): DevkitNode[] {
+        const config = getConfig();
+        if (!config) {return [];}
+        return [
+            { kind: 'autoConnectToggle', enabled: config.autoConnect ?? true },
+            { kind: 'stopAction', action: config.debug.stopAction },
+            { kind: 'logsToggle', enabled: config.debug.receiveLogs },
+        ];
+    }
+
+    /** 按 name 在缓存的服务器插件列表里找状态 */
+    private serverStateFor(name: string): ServerPluginState | undefined {
+        const p = this._serverPlugins.find(x => x.name === name || x.id === name);
+        if (!p) {return { pushed: false, enabled: false };}
+        return { pushed: true, enabled: p.enabled !== false, pluginId: p.id ?? p.name };
     }
 
     // ─── 渲染 ────────────────────────────────────────────
@@ -78,12 +176,6 @@ export class DevkitTreeProvider implements vscode.TreeDataProvider<DevkitNode> {
     /** 把节点数据转成 TreeItem(带 contextValue / icon / command) */
     private toTreeItem(node: DevkitNode): DevkitItem {
         switch (node.kind) {
-            case 'root': {
-                const item = this.base('AstrBot DevKit', 'devkitRoot', node);
-                item.collapsibleState = vscode.TreeItemCollapsibleState.None;
-                item.iconPath = new vscode.ThemeIcon('robot');
-                return item;
-            }
             case 'server': {
                 const item = this.base(`服务器 ${node.address || '(未配置)'}`, 'devkitServer', node);
                 item.description = this.describeServer(node.state);
@@ -97,27 +189,65 @@ export class DevkitTreeProvider implements vscode.TreeDataProvider<DevkitNode> {
                 const ctx = node.active ? 'devkitWorkspaceActive' : 'devkitWorkspace';
                 const label = node.workspace.name + (node.workspace.version ? ` ${node.workspace.version}` : '');
                 const item = this.base(label, ctx, node);
-                item.description = node.active ? '当前活跃' : node.workspace.dir;
+                // description:活跃优先;否则按服务器状态显示
+                const parts: string[] = [];
+                if (node.active) {parts.push('活跃');}
+                if (node.serverState) {
+                    if (!node.serverState.pushed) {parts.push('未推送');}
+                    else if (!node.serverState.enabled) {parts.push('已禁用');}
+                }
+                if (parts.length === 0) {parts.push(node.workspace.dir);}
+                item.description = parts.join(' · ');
                 item.iconPath = new vscode.ThemeIcon(
                     node.active ? 'circle-large-filled' : 'circle-large-outline',
                 );
+                item.collapsibleState = vscode.TreeItemCollapsibleState.Collapsed;
                 item.tooltip = `插件:${node.workspace.name}\n版本:${node.workspace.version}\n目录:${node.workspace.dir}${node.active ? '\n(当前 Debug 目标)' : ''}`;
-                // 活跃节点点击触发 Debug;非活跃点击设为活跃
+                // 点击只设为活跃,不再直接 Debug(避免误触;Debug 走展开后的子项)
                 item.command = {
-                    command: node.active ? 'astrbot-devkit.Debug' : 'astrbot-devkit.SetActivePlugin',
-                    title: node.active ? 'Debug' : 'Set Active',
+                    command: 'astrbot-devkit.SetActivePlugin',
+                    title: 'Set Active',
                     arguments: [node.workspace],
                 };
                 return item;
             }
-            case 'pluginConfig': {
-                const item = this.base(`当前插件配置 (${node.workspace.name})`, 'devkitPluginConfig', node);
-                item.iconPath = new vscode.ThemeIcon('settings-gear');
+            case 'workspaceAction': {
+                const map: Record<string, { label: string; icon: string; cmd: string; ctx: string }> = {
+                    config: { label: '配置', icon: 'settings-gear', cmd: 'astrbot-devkit.OpenPluginConfig', ctx: 'devkitWorkspaceActionConfig' },
+                    debug: { label: '调试', icon: 'debug-start', cmd: 'astrbot-devkit.Debug', ctx: 'devkitWorkspaceActionDebug' },
+                    reload: { label: '重载', icon: 'debug-restart', cmd: 'astrbot-devkit.ReloadPlugin', ctx: 'devkitWorkspaceActionReload' },
+                };
+                const m = map[node.action];
+                const item = this.base(m.label, m.ctx, node);
+                item.iconPath = new vscode.ThemeIcon(m.icon);
+                item.tooltip = node.action === 'config'
+                    ? `打开 ${node.workspace.name} 的配置(支持本地 schema)`
+                    : node.action === 'debug'
+                        ? `推送 ${node.workspace.name} 到服务器并观察日志`
+                        : `重载 ${node.workspace.name}`;
+                item.command = { command: m.cmd, title: m.label, arguments: [node.workspace] };
+                return item;
+            }
+            case 'workspaceEnabled': {
+                const item = this.base(
+                    node.enabled ? '已启用' : '已禁用',
+                    'devkitWorkspaceEnabled',
+                    node,
+                );
+                item.iconPath = new vscode.ThemeIcon(node.enabled ? 'check' : 'circle-outline');
+                item.tooltip = `点击${node.enabled ? '禁用' : '启用'} ${node.workspace.name}(服务器端)`;
                 item.command = {
-                    command: 'astrbot-devkit.OpenPluginConfig',
-                    title: 'Open Plugin Config',
+                    command: 'astrbot-devkit.TogglePluginEnabled',
+                    title: 'Toggle enabled',
                     arguments: [node.workspace],
                 };
+                return item;
+            }
+            case 'settingsGroup': {
+                const item = this.base('设置', 'devkitSettingsGroup', node);
+                item.iconPath = new vscode.ThemeIcon('gear');
+                item.description = '自动连接 / 调试结束后 / 接收日志';
+                item.collapsibleState = vscode.TreeItemCollapsibleState.Collapsed;
                 return item;
             }
             case 'autoConnectToggle': {
@@ -127,44 +257,27 @@ export class DevkitTreeProvider implements vscode.TreeDataProvider<DevkitNode> {
                     node,
                 );
                 item.description = node.enabled ? '启动时自动拉取' : '需手动连接';
-                item.iconPath = new vscode.ThemeIcon(
-                    node.enabled ? 'check' : 'circle-outline',
-                );
+                item.iconPath = new vscode.ThemeIcon(node.enabled ? 'check' : 'circle-outline');
                 item.tooltip = '启动时是否自动连接/拉取 AstrBot 服务器信息,点击切换';
-                item.command = {
-                    command: 'astrbot-devkit.ToggleAutoConnect',
-                    title: 'Toggle auto connect',
-                };
+                item.command = { command: 'astrbot-devkit.ToggleAutoConnect', title: 'Toggle auto connect' };
                 return item;
             }
             case 'stopAction': {
                 const label: Record<string, string> = {
-                    ask: '每次询问',
-                    disable: '直接禁用',
-                    keep: '保留运行',
+                    ask: '每次询问', disable: '直接禁用', keep: '保留运行',
                 };
-                const item = this.base(
-                    `调试结束后:${label[node.action]}`,
-                    'devkitStopAction',
-                    node,
-                );
+                const item = this.base(`调试结束后:${label[node.action]}`, 'devkitStopAction', node);
                 item.description = '点击修改';
                 item.iconPath = new vscode.ThemeIcon('debug-stop');
                 item.tooltip = '停止 debug 后对插件的处理:每次询问 / 直接禁用 / 保留运行';
-                item.command = {
-                    command: 'astrbot-devkit.EditStopAction',
-                    title: 'Edit stop action',
-                };
+                item.command = { command: 'astrbot-devkit.EditStopAction', title: 'Edit stop action' };
                 return item;
             }
             case 'logs': {
                 const item = this.base('日志', 'devkitLogs', node);
                 item.description = this._debugging ? '观察中' : 'AstrBot Server';
                 item.iconPath = new vscode.ThemeIcon('output');
-                item.command = {
-                    command: 'astrbot-devkit.OpenServerLogs',
-                    title: 'Open Server Logs',
-                };
+                item.command = { command: 'astrbot-devkit.OpenServerLogs', title: 'Open Server Logs' };
                 return item;
             }
             case 'logsToggle': {
@@ -174,14 +287,9 @@ export class DevkitTreeProvider implements vscode.TreeDataProvider<DevkitNode> {
                     node,
                 );
                 item.description = node.enabled ? '点击关闭' : '点击开启';
-                item.iconPath = new vscode.ThemeIcon(
-                    node.enabled ? 'check' : 'circle-outline',
-                );
+                item.iconPath = new vscode.ThemeIcon(node.enabled ? 'check' : 'circle-outline');
                 item.tooltip = '控制是否接收并显示服务器日志(调试时实时生效),点击切换';
-                item.command = {
-                    command: 'astrbot-devkit.ToggleLogs',
-                    title: 'Toggle server logs',
-                };
+                item.command = { command: 'astrbot-devkit.ToggleLogs', title: 'Toggle server logs' };
                 return item;
             }
             case 'placeholder': {
@@ -213,59 +321,5 @@ export class DevkitTreeProvider implements vscode.TreeDataProvider<DevkitNode> {
                 // 'unconfigured' 同时表示「无配置」与「已配置但未连接」,按配置是否存在区分
                 return getConfig() ? '未连接' : '配置缺失';
         }
-    }
-
-    /** 根节点的子项:服务器 + 插件工作区组 + 配置 + 日志 */
-    private rootChildren(): DevkitNode[] {
-        const children: DevkitNode[] = [];
-
-        // 1. 服务器节点(始终显示)
-        const config = getConfig();
-        const address = config?.astrbotServer ?? this._serverAddress;
-        children.push({ kind: 'server', state: this._connection, address });
-
-        // 未配置时,给创建入口
-        if (!config) {
-            children.push({
-                kind: 'placeholder',
-                message: '尚未配置 AstrBot 服务器',
-                command: 'astrbot-devkit.CreateConfig',
-            });
-            return children;
-        }
-
-        // 2. 插件工作区节点组(扁平展示每个 workspace)
-        const workspaces = config.pluginWorkspaces ?? [];
-        if (workspaces.length === 0) {
-            children.push({
-                kind: 'placeholder',
-                message: '暂无插件工作区,点击添加或扫描',
-                command: 'astrbot-devkit.ScanPlugins',
-            });
-        } else {
-            for (const w of workspaces) {
-                children.push({ kind: 'workspace', workspace: w, active: !!w.active });
-            }
-        }
-
-        // 3. 当前插件配置(仅活跃插件存在时显示)
-        const active = workspaces.find(w => w.active);
-        if (active) {
-            children.push({ kind: 'pluginConfig', workspace: active });
-        }
-
-        // 3.5. 自动连接开关
-        children.push({ kind: 'autoConnectToggle', enabled: config.autoConnect ?? true });
-
-        // 3.6. 调试结束后处理
-        children.push({ kind: 'stopAction', action: config.debug.stopAction });
-
-        // 4. 日志节点(始终显示,debug 时标记观察中)
-        children.push({ kind: 'logs' });
-
-        // 4.5. 接收服务器日志开关(实时控制是否接收/显示)
-        children.push({ kind: 'logsToggle', enabled: config.debug.receiveLogs });
-
-        return children;
     }
 }

@@ -30,6 +30,8 @@ export function serverCommands(app: AppContext): CommandDef[] {
                     try { await client.connect(); } catch {}
                 }
                 app.syncContext();
+                // 刷新服务器插件列表(侧边栏已推送/已启用状态)
+                await app.refreshServerPlugins();
             },
         },
 

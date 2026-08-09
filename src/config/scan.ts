@@ -9,6 +9,7 @@ import {
     SCAN_EXCLUDE_DIRS,
 } from '../constants.js';
 import type { DevKitConfig, PluginCandidate, PluginWorkspace } from './types.js';
+import type { ConfigSchema } from '../api/plugins.js';
 import {
     getConfig, saveConfig, toRelativePosix, getWorkspaceRoot, resolve,
 } from './io.js';
@@ -154,4 +155,25 @@ export function isPluginRoot(dirRel: string): PluginCandidate | undefined {
     const rel = toRelativePosix(abs);
     if (!rel) {return undefined;}
     return { dir: rel, name: parsed.name, version: parsed.version };
+}
+
+/**
+ * 读取本地插件目录下的 `_conf_schema.json`(AstrBot 自定义 schema 格式)。
+ * 文件不存在/解析失败返回 undefined,不抛错。
+ * 用于配置表单在插件未推送时也能基于本地 schema 渲染。
+ */
+export function getLocalConfigSchema(dirRel: string): ConfigSchema | undefined {
+    const abs = path.isAbsolute(dirRel) ? dirRel : resolve(dirRel);
+    if (!abs) {return undefined;}
+    const file = path.join(abs, '_conf_schema.json');
+    if (!fs.existsSync(file)) {return undefined;}
+    try {
+        const raw = JSON.parse(readText(file));
+        if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+            return raw as ConfigSchema;
+        }
+        return undefined;
+    } catch {
+        return undefined;
+    }
 }

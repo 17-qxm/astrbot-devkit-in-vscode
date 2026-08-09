@@ -35,11 +35,6 @@
           "type": "tree",
           "id": "astrbot-devkit.main",
           "name": "AstrBot DevKit"
-        },
-        {
-          "type": "tree",
-          "id": "astrbot-devkit.local",
-          "name": "本地插件"
         }
       ]
     },
@@ -148,6 +143,16 @@
         "command": "astrbot-devkit.ToggleLogs",
         "title": "%astrbot-devkit.ToggleLogs%",
         "category": "AstrBot"
+      },
+      {
+        "command": "astrbot-devkit.ReloadPlugin",
+        "title": "%astrbot-devkit.ReloadPlugin%",
+        "category": "AstrBot"
+      },
+      {
+        "command": "astrbot-devkit.TogglePluginEnabled",
+        "title": "%astrbot-devkit.TogglePluginEnabled%",
+        "category": "AstrBot"
       }
     ],
     "debuggers": [
@@ -237,25 +242,6 @@
         {
           "command": "astrbot-devkit.OpenServerLogs",
           "when": "view == astrbot-devkit.main && viewItem == devkitLogs"
-        },
-        {
-          "command": "astrbot-devkit.SetActivePlugin",
-          "when": "view == astrbot-devkit.local && viewItem == devkitLocalPlugin",
-          "group": "inline@1"
-        },
-        {
-          "command": "astrbot-devkit.Debug",
-          "when": "view == astrbot-devkit.local && viewItem == devkitLocalPluginActive && !astrbotDevkit.debugging",
-          "group": "inline@1"
-        },
-        {
-          "command": "astrbot-devkit.StopDebug",
-          "when": "view == astrbot-devkit.local && viewItem == devkitLocalPluginActive && astrbotDevkit.debugging",
-          "group": "inline@1"
-        },
-        {
-          "command": "astrbot-devkit.OpenPluginConfig",
-          "when": "view == astrbot-devkit.local && (viewItem == devkitLocalPlugin || viewItem == devkitLocalPluginActive)"
         }
       ],
       "commandPalette": [

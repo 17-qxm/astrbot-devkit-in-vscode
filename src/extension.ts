@@ -23,9 +23,8 @@ export function activate(context: vscode.ExtensionContext) {
     // setContext 初始化
     vscode.commands.executeCommand('setContext', 'astrbotDevkit.debugging', false);
 
-    // 注册侧边栏视图
+    // 注册侧边栏视图(单一视图:服务器 + 插件操作面板 + 设置 + 日志)
     vscode.window.registerTreeDataProvider('astrbot-devkit.main', app.tree);
-    vscode.window.registerTreeDataProvider('astrbot-devkit.local', app.localTree);
 
     // 构建初始 client(若已有配置)
     app.rebuildClient();

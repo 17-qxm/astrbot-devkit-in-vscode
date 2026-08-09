@@ -18,5 +18,7 @@
     "astrbot-devkit.ListServerPlugins": "列出服务器插件",
     "astrbot-devkit.ToggleAutoConnect": "切换自动连接服务器",
     "astrbot-devkit.EditStopAction": "编辑调试结束后插件处理",
-    "astrbot-devkit.ToggleLogs": "切换接收服务器日志"
+    "astrbot-devkit.ToggleLogs": "切换接收服务器日志",
+    "astrbot-devkit.ReloadPlugin": "重载插件",
+    "astrbot-devkit.TogglePluginEnabled": "启用/禁用插件"
 }

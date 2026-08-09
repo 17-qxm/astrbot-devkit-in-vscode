@@ -10,7 +10,7 @@ import {
     reloadPlugin, resolvePluginId, type ConfigSchema, type SchemaField,
 } from '../api/plugins.js';
 import type { PluginWorkspace } from '../config/index.js';
-import { getConfig } from '../config/index.js';
+import { getConfig, getLocalConfigSchema } from '../config/index.js';
 import * as logger from '../logger.js';
 import { describeApiError } from '../api/client.js';
 
@@ -25,38 +25,87 @@ interface ConfigEditSession {
 /** 当前打开的配置编辑会话,文档关闭时清理 */
 const activeSessions = new Map<string, ConfigEditSession>();
 
-// ─── 打开配置 ────────────────────────────────────────────
+// ─── schema + config 解析(表单 / JSON 文档两路共用) ────────
+
+/** 解析结果:pluginId 为 undefined 表示插件未推送 */
+export interface ResolvedConfig {
+    pluginId: string | undefined;
+    schema: ConfigSchema;
+    config: Record<string, unknown>;
+}
+
+/**
+ * 解析某插件配置的 schema 与当前值。两条路(表单 / JSON 文档)共用。
+ *
+ * schema 优先级:本地 `_conf_schema.json` > 服务器 schema > 空 schema。
+ * config 来源:已推送(pluginId 能解析)→ 服务器 config;未推送 → 用 schema default 预填。
+ *
+ * @throws 网络/鉴权错误(调用方 try/catch 弹提示)
+ */
+export async function resolveSchemaAndConfig(
+    client: AstrBotClient, workspace: PluginWorkspace,
+): Promise<ResolvedConfig> {
+    // 1. schema:本地优先
+    const localSchema = getLocalConfigSchema(workspace.dir);
+    let schema: ConfigSchema = localSchema ?? {};
+
+    // 2. pluginId(按 name 在服务器插件列表里找)
+    const pluginId = await resolvePluginId(client, workspace.name);
+
+    // 3. 已推送:并行补 schema(本地没有时)与拉 config
+    if (pluginId) {
+        const [serverConfig, serverSchema] = await Promise.all([
+            getPluginConfig(client, pluginId),
+            localSchema ? Promise.resolve(undefined) : getPluginConfigSchema(client, pluginId),
+        ]);
+        if (!localSchema && serverSchema) {schema = serverSchema;}
+        return { pluginId, schema, config: serverConfig };
+    }
+
+    // 4. 未推送:本地 schema(可能为空) + default 预填
+    return { pluginId: undefined, schema, config: defaultConfigFromSchema(schema) };
+}
+
+/** 按 schema 各字段 default 生成一份初始 config(未推送时预填用) */
+export function defaultConfigFromSchema(schema: ConfigSchema): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const [key, field] of Object.entries(schema)) {
+        if (field.invisible) {continue;}
+        out[key] = field.default !== undefined ? field.default : defaultValueForType(field);
+    }
+    return out;
+}
+
+function defaultValueForType(field: SchemaField): unknown {
+    switch ((field.type ?? '').toLowerCase()) {
+        case 'bool': return false;
+        case 'int': case 'float': return 0;
+        case 'list': case 'template_list': return [];
+        case 'object': case 'dict':
+            return field.items ? defaultConfigFromSchema(field.items as ConfigSchema) : {};
+        default: return '';
+    }
+}
+
+// ─── 打开配置(JSON 文档路径,表单的「编辑原始 JSON」回退到这里) ────
 
 /**
  * 打开某插件的配置编辑文档(untitled,内容为服务器端当前配置)。
- * 流程:按 name 匹配 pluginId → 并行拉 config + schema → 打开 untitled 文档。
+ * 流程:resolveSchemaAndConfig(schema 优先本地)→ 打开 untitled 文档。
+ * 未推送插件也能打开(用本地 schema + default 预填),但保存时会拦截。
  */
 export async function openPluginConfig(
     client: AstrBotClient, workspace: PluginWorkspace,
 ): Promise<void> {
     logger.separator(`打开配置:${workspace.name}`);
-    logger.log(`匹配 pluginId…`);
-    const pluginId = await resolvePluginId(client, workspace.name);
-    if (!pluginId) {
-        vscode.window.showErrorMessage(
-            `服务器上未找到插件「${workspace.name}」,请先推送(F5)后再编辑配置`,
-        );
-        return;
-    }
-    logger.log(`pluginId = ${pluginId}`);
-
-    logger.log(`拉取 config + schema…`);
-    let config: Record<string, unknown>;
-    let schema: ConfigSchema;
+    let resolved: ResolvedConfig;
     try {
-        [config, schema] = await Promise.all([
-            getPluginConfig(client, pluginId),
-            getPluginConfigSchema(client, pluginId),
-        ]);
+        resolved = await resolveSchemaAndConfig(client, workspace);
     } catch (e) {
         vscode.window.showErrorMessage(`拉取配置失败:${describeApiError(e)}`);
         return;
     }
+    const { pluginId, schema, config } = resolved;
 
     const content = JSON.stringify(config, null, 4);
     const doc = await vscode.workspace.openTextDocument({
@@ -65,13 +114,22 @@ export async function openPluginConfig(
     });
     // untitled 文档没有文件名,用 scheme:untitled + path 作为 key
     const uriKey = doc.uri.toString();
-    activeSessions.set(uriKey, { workspace, pluginId, schema, document: doc });
+    // pluginId 为空时存一个标记:保存时用此判断是否拦截
+    activeSessions.set(uriKey, {
+        workspace, pluginId: pluginId ?? '', schema, document: doc,
+    });
 
     await vscode.window.showTextDocument(doc, { preview: false });
-    vscode.window.showInformationMessage(
-        `${workspace.name} 配置已从服务器加载。编辑后通过命令面板执行「AstrBot: 推送插件配置到服务器」`,
-    );
-    logger.log(`配置文档已打开(uri=${uriKey})`);
+    if (!pluginId) {
+        vscode.window.showWarningMessage(
+            `${workspace.name} 尚未推送到服务器,当前为本地 schema 预填的默认配置。保存时会被拦截,请先 F5 推送。`,
+        );
+    } else {
+        vscode.window.showInformationMessage(
+            `${workspace.name} 配置已加载。编辑后通过命令面板执行「AstrBot: 推送插件配置到服务器」`,
+        );
+    }
+    logger.log(`配置文档已打开(uri=${uriKey}, pluginId=${pluginId ?? '(未推送)'})`);
 }
 
 // ─── 推送配置 ────────────────────────────────────────────
@@ -88,6 +146,14 @@ export async function pushPluginConfig(client: AstrBotClient, editor: vscode.Tex
         return;
     }
     const { workspace, pluginId, schema } = session;
+
+    // 0. 未推送拦截:pluginId 为空时不能保存
+    if (!pluginId) {
+        vscode.window.showWarningMessage(
+            `${workspace.name} 尚未推送到服务器,无法保存配置。请先 F5 推送插件。`,
+        );
+        return;
+    }
 
     // 1. 解析 JSON
     let value: unknown;
