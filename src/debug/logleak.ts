@@ -4,7 +4,7 @@
 import * as vscode from 'vscode';
 import type { AstrBotClient } from '../api/client.js';
 import { describeApiError } from '../api/client.js';
-import { listPlugins, installPluginFromGithub } from '../api/plugins.js';
+import { listPlugins, installPluginFromGithub, isPluginEnabled } from '../api/plugins.js';
 import { LOGLEAK_PLUGIN_ID, LOGLEAK_PLUGIN_REPO } from '../constants.js';
 import * as logger from '../logger.js';
 import type { ConsoleWriter } from './protocol.js';
@@ -19,11 +19,11 @@ export async function ensureLogleakPlugin(
         const plugin = plugins.find(p =>
             p.name === LOGLEAK_PLUGIN_ID || p.id === LOGLEAK_PLUGIN_ID,
         );
-        // 已安装且启用(字段以实际响应为准:enabled / activated)
-        if (plugin && plugin.enabled !== false && plugin.activated !== false) {
+        // 已安装且启用(用 isPluginEnabled 兼容 enabled/activated)
+        if (plugin && isPluginEnabled(plugin)) {
             return true;
         }
-        if (plugin && (plugin.enabled === false || plugin.activated === false)) {
+        if (plugin && !isPluginEnabled(plugin)) {
             write('console', '⚠️ 日志投射插件已禁用,请在 AstrBot WebUI 启用\n');
             return false;
         }
@@ -55,7 +55,7 @@ export async function ensureLogleakPlugin(
                     const p = list.find(x =>
                         x.name === LOGLEAK_PLUGIN_ID || x.id === LOGLEAK_PLUGIN_ID,
                     );
-                    if (p && p.enabled !== false && p.activated !== false) {
+                    if (p && isPluginEnabled(p)) {
                         write('console', '✅ 日志投射插件已就绪\n');
                         return true;
                     }

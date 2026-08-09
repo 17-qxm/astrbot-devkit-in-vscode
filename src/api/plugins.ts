@@ -3,15 +3,36 @@
 
 import type { AstrBotClient } from './client.js';
 
-/** GET /plugins 返回项;字段以实际响应为准(见 implementation.md §15 TODO 2),至少 id/name/enabled */
+/**
+ * GET /plugins 返回项。
+ * 实测服务器(v4.4.0)返回:无 id 字段(用 name 作唯一标识),启用状态字段是
+ * `activated`(非 enabled)。这里两者都标可选 + 带 helpers,兼容新旧。
+ */
 export interface PluginInfo {
-    id: string;
+    /** 服务器实际不返回此字段;用 name 作 id。保留是为了兼容旧响应 */
+    id?: string;
     name: string;
-    enabled: boolean;
+    /** 旧字段;新服务器用 activated */
+    enabled?: boolean;
+    /** 新服务器(v4.x)的启用状态字段 */
+    activated?: boolean;
     version?: string;
     desc?: string;
     repo?: string;
     [k: string]: unknown;
+}
+
+/** 插件是否处于启用状态:优先 activated(新),其次 enabled(旧),默认 true */
+export function isPluginEnabled(p: PluginInfo): boolean {
+    // activated 优先;若显式为 false 则禁用;undefined 时 fallback 到 enabled
+    if (p.activated !== undefined) {return p.activated;}
+    if (p.enabled !== undefined) {return p.enabled;}
+    return true;
+}
+
+/** 取插件唯一标识:优先 id,否则 name(新服务器无 id) */
+export function pluginIdOf(p: PluginInfo): string {
+    return p.id ?? p.name;
 }
 
 /**
@@ -150,14 +171,14 @@ export async function uploadPluginZip(
 
 /**
  * 按 name 匹配插件 id(用于 configEditor / debugAdapter)。
- * 优先精确匹配 name,其次匹配 id。
+ * 新服务器无 id 字段,直接用 name 作标识;返回值用作 /plugins/{id}/... 的 path 参数。
  */
 export async function resolvePluginId(
     client: AstrBotClient, name: string,
 ): Promise<string | undefined> {
     const plugins = await listPlugins(client, { includeReserved: true });
     const byName = plugins.find(p => p.name === name);
-    if (byName) {return byName.id ?? byName.name;}
+    if (byName) {return pluginIdOf(byName);}
     const byId = plugins.find(p => p.id === name);
-    return byId?.id ?? byId?.name;
+    return byId ? pluginIdOf(byId) : undefined;
 }

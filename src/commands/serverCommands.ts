@@ -96,7 +96,7 @@ export function serverCommands(app: AppContext): CommandDef[] {
                     ch.clear();
                     ch.appendLine(`服务器插件共 ${list.length} 个:`);
                     for (const p of list) {
-                        ch.appendLine(`  ${p.name} (id=${p.id}, v${p.version ?? '?'}, enabled=${p.enabled})`);
+                        ch.appendLine(`  ${p.name} (id=${pluginsApi.pluginIdOf(p)}, v${p.version ?? '?'}, activated=${p.activated ?? p.enabled ?? '?'})`);
                     }
                     ch.show(true);
                 } catch (e) {

@@ -15,7 +15,7 @@ import {
     pushPluginConfig,
 } from '../views/configEditor.js';
 import {
-    reloadPlugin, setPluginEnabled, resolvePluginId, listPlugins,
+    reloadPlugin, setPluginEnabled, resolvePluginId, listPlugins, isPluginEnabled,
 } from '../api/plugins.js';
 import { describeApiError } from '../api/client.js';
 import type { AppContext } from '../context.js';
@@ -207,10 +207,10 @@ export function pluginCommands(app: AppContext): CommandDef[] {
                     vscode.window.showWarningMessage(`${ws.name} 尚未推送,无法切换启用状态`);
                     return;
                 }
-                // 读当前 enabled:从服务器插件列表取当前状态后翻转
+                // 读当前启用状态(兼容 activated/enabled)后翻转
                 const list = await listPlugins(client, { includeReserved: true });
                 const cur = list.find(p => p.name === ws.name || p.id === ws.name);
-                const next = !(cur?.enabled !== false);
+                const next = cur ? !isPluginEnabled(cur) : true;
                 try {
                     await setPluginEnabled(client, pluginId, next);
                     vscode.window.showInformationMessage(`${ws.name} 已${next ? '启用' : '禁用'}`);

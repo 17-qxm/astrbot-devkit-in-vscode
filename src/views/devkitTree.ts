@@ -6,6 +6,7 @@
 import * as vscode from 'vscode';
 import type { ConnectionState } from '../api/client.js';
 import type { PluginInfo } from '../api/plugins.js';
+import { isPluginEnabled, pluginIdOf } from '../api/plugins.js';
 import type { PluginWorkspace } from '../config/index.js';
 import { getConfig, isWorkspaceEmpty } from '../config/index.js';
 
@@ -177,7 +178,7 @@ export class DevkitTreeProvider implements vscode.TreeDataProvider<DevkitNode> {
     private serverStateFor(name: string): ServerPluginState | undefined {
         const p = this._serverPlugins.find(x => x.name === name || x.id === name);
         if (!p) {return { pushed: false, enabled: false };}
-        return { pushed: true, enabled: p.enabled !== false, pluginId: p.id ?? p.name };
+        return { pushed: true, enabled: isPluginEnabled(p), pluginId: pluginIdOf(p) };
     }
 
     // ─── 渲染 ────────────────────────────────────────────
