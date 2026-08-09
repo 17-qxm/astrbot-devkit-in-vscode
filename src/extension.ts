@@ -3,7 +3,8 @@
 // 激活全部静默、零打扰;所有初始化结果只反映在侧边栏状态上。见 design.md §3 / implementation.md §10。
 
 import * as vscode from 'vscode';
-import * as AstrBotMain from './main.js';
+import { InitEnv } from './initenv/index.js';
+import { WorkspaceCheck } from './initenv/workspaceCheck.js';
 import * as logger from './logger.js';
 import { runConfigWizard } from './configWizard.js';
 import {
@@ -183,8 +184,8 @@ function registerCommands(context: vscode.ExtensionContext): void {
     reg('astrbot-devkit.GetActivePluginName', () => getActivePluginName());
 
     // ── 原有命令:InitEnv / WorkspaceCheck(重构时遗漏,补注册) ──
-    reg('astrbot-devkit-in-vscode.InitEnv', () => AstrBotMain.InitEnv());
-    reg('astrbot-devkit-in-vscode.WorkspaceCheck', () => AstrBotMain.WorkspaceCheck());
+    reg('astrbot-devkit-in-vscode.InitEnv', () => InitEnv());
+    reg('astrbot-devkit-in-vscode.WorkspaceCheck', () => WorkspaceCheck());
 
     // ── 视图刷新 ──
     reg('astrbot-devkit.Refresh', async () => {
