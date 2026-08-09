@@ -2,7 +2,7 @@
 // pluginWorkspaces。单击单选设定 F5 推送目标(active 唯一),与主视图的活跃插件保持一致。
 
 import * as vscode from 'vscode';
-import { getConfig, getWorkspaceRoot, type PluginWorkspace } from '../config.js';
+import { getConfig, getWorkspaceRoot, type PluginWorkspace } from '../config/index.js';
 
 export type LocalNode =
     | { kind: 'plugin'; workspace: PluginWorkspace; active: boolean }

@@ -15,10 +15,10 @@ import {
     uploadPluginZip, listPlugins, setPluginEnabled, deletePlugin, resolvePluginId,
     installPluginFromGithub,
 } from '../api/plugins.js';
-import type { PluginWorkspace } from '../config.js';
+import type { PluginWorkspace } from '../config/index.js';
 import {
     getConfig, getActiveWorkspace, getWorkspaceRoot,
-} from '../config.js';
+} from '../config/index.js';
 import { LogRelay } from '../logs/relay.js';
 import * as logger from '../logger.js';
 import {

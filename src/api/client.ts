@@ -5,7 +5,7 @@
 
 import * as vscode from 'vscode';
 import * as logger from '../logger.js';
-import type { DevKitConfig } from '../config.js';
+import type { DevKitConfig } from '../config/index.js';
 import { REQUEST_TIMEOUT_MS, PROBE_TIMEOUT_MS } from '../constants.js';
 
 // ─── 类型 ────────────────────────────────────────────────

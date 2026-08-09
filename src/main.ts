@@ -10,7 +10,7 @@ import {
     isPluginRoot,
     scanWorkspaceForPlugins,
     saveConfig,
-} from './config.js';
+} from './config/index.js';
 import { runConfigWizard } from './configWizard.js';
 
 const PLUGIN_PREFIX = 'astrbot_plugin_';

@@ -13,7 +13,7 @@ import {
     scanWorkspaceForPlugins, isPluginRoot, getConfigFilePath,
     getWorkspaceRoot, addPluginCandidates,
     type PluginWorkspace, type DevKitConfig,
-} from './config.js';
+} from './config/index.js';
 import {
     createClient, describeApiError, type AstrBotClient, type ConnectionState,
 } from './api/client.js';

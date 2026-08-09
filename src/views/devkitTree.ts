@@ -4,8 +4,8 @@
 
 import * as vscode from 'vscode';
 import type { ConnectionState } from '../api/client.js';
-import type { PluginWorkspace } from '../config.js';
-import { getConfig } from '../config.js';
+import type { PluginWorkspace } from '../config/index.js';
+import { getConfig } from '../config/index.js';
 
 // ─── 节点类型 ────────────────────────────────────────────
 

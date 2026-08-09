@@ -9,7 +9,7 @@ import {
     saveConfig,
     DEFAULT_DEBUG,
     type DevKitConfig,
-} from './config.js';
+} from './config/index.js';
 import { createClient, describeApiError } from './api/client.js';
 
 /** 服务器地址宽松校验(与 schema / EditServerAddress 一致) */

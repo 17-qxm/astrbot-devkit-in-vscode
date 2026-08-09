@@ -9,8 +9,8 @@ import {
     getPluginConfig, getPluginConfigSchema, savePluginConfig,
     reloadPlugin, resolvePluginId, type ConfigSchema, type SchemaField,
 } from '../api/plugins.js';
-import type { PluginWorkspace } from '../config.js';
-import { getConfig } from '../config.js';
+import type { PluginWorkspace } from '../config/index.js';
+import { getConfig } from '../config/index.js';
 import * as logger from '../logger.js';
 import { describeApiError } from '../api/client.js';
 
