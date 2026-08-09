@@ -3,6 +3,15 @@
 import * as vscode from 'vscode';
 import * as tool from './tool.js';
 import * as logger from './logger.js';
+import {
+    addPluginCandidates,
+    ensureConfigFile,
+    getConfig,
+    isPluginRoot,
+    scanWorkspaceForPlugins,
+    saveConfig,
+} from './config.js';
+import { runConfigWizard } from './configWizard.js';
 
 const PLUGIN_PREFIX = 'astrbot_plugin_';
 const HELLOWORLD_TEMPLATE_URL = 'https://github.com/Soulter/helloworld/archive/refs/heads/master.zip';
@@ -53,10 +62,9 @@ type StepChain = Step[];
  * 2. 三条步骤链并行执行(链内串行),全程通过进度通知展示当前进度:
  *    A. 创建虚拟环境 → 更新 pip → 安装依赖
  *    B. 下载 AstrBot-Skill → 创建 .codex/skills 软链接
- *    C. 下载 helloworld 模板 → git init
+ *    C. 下载 helloworld 模板 → git init → 写 .vscode/astrbot-devkit-config.json(注册新插件)
+ *       → 询问服务器地址/API key 并探活保存(已配置则跳过)
  * 3. 全部结束后统一汇总:任一 fatal 步骤失败则整体标记失败。
- *
- * TODO: 原计划中的「写 .vscode/astrbot-devkit-config.json」步骤尚未实现。
  */
 export async function InitEnv() {
     logger.clear();
@@ -90,7 +98,7 @@ export async function InitEnv() {
             const chains: StepChain[] = [
                 [stepCreateVenv(venvTool), stepUpdatePip(), stepInstallDeps()],
                 [stepDownloadSkill(), stepCreateSymlink()],
-                [stepDownloadTemplate(), stepGitInit()],
+                [stepDownloadTemplate(), stepGitInit(), stepWriteConfig(), stepConfigureServer()],
             ];
             const totalSteps = chains.reduce((n, c) => n + c.length, 0);
             let completed = 0;
@@ -113,8 +121,6 @@ export async function InitEnv() {
         case 'ok':
             logger.separator('InitEnv 完成');
             logger.log('✅ InitEnv 完成');
-            // 最后检查一下工作区
-            WorkspaceCheck();
             break;
         case 'cancelled':
             logger.log('用户取消,InitEnv 中止');
@@ -609,15 +615,127 @@ function stepGitInit(): Step {
     return step;
 }
 
+// ─── step 7:写 .vscode/astrbot-devkit-config.json ────────
+
+function stepWriteConfig(): Step {
+    return {
+        title: 'step 7: 写 .vscode/astrbot-devkit-config.json',
+        failMessage: '写入配置文件失败',
+        run: async (ctx) => {
+            // 1. 配置文件缺失时用模板创建(默认服务器 127.0.0.1:6185)
+            if (await ensureConfigFile()) {
+                logger.log('✅ 已创建配置文件(默认服务器 127.0.0.1:6185)');
+            } else {
+                logger.log('配置文件已存在,复用现有内容');
+            }
+
+            const config = getConfig();
+            if (!config) {
+                logger.error('配置文件读取失败');
+                return 'failed';
+            }
+
+            // 2. 把 InitEnv 下载的插件注册进 pluginWorkspaces(由 metadata.yaml 生成)
+            if (ctx.pluginName) {
+                const cand = isPluginRoot(ctx.pluginName);
+                if (!cand) {
+                    logger.error(`未找到 ${ctx.pluginName}/metadata.yaml,无法注册插件(可稍后用「自动检索插件」补录)`);
+                    return 'failed';
+                }
+                const ws = config.pluginWorkspaces ?? [];
+                if (ws.some(w => w.name === cand.name)) {
+                    logger.log(`插件 ${cand.name} 已在 pluginWorkspaces 中,无需重复注册`);
+                } else {
+                    // 当前没有活跃插件时,把新插件设为活跃(F5/Debug 的目标)
+                    const hasActive = ws.some(w => w.active);
+                    ws.push({
+                        dir: cand.dir,
+                        name: cand.name,
+                        version: cand.version,
+                        active: !hasActive,
+                    });
+                    config.pluginWorkspaces = ws;
+                    await saveConfig(config);
+                    logger.log(`✅ 已注册插件: ${cand.name} v${cand.version}(${cand.dir})${hasActive ? '' : ',并设为活跃'}`);
+                }
+            }
+            return 'ok';
+        },
+    };
+}
+
+// ─── step 8:配置服务器连接 ───────────────────────────────
+
+function stepConfigureServer(): Step {
+    return {
+        title: 'step 8: 配置服务器连接',
+        // 已配置过(API key 非空)则跳过,保证 InitEnv 幂等
+        skipIfDone: () => !!getConfig()?.astrbotAPIkey,
+        skipMessage: '已配置服务器连接(API key 非空),跳过',
+        doneMessage: '✅ 服务器连接已配置',
+        failMessage: '配置服务器连接失败(可稍后用「创建配置」补全)',
+        run: async () => {
+            const ok = await runConfigWizard();
+            if (!ok) {
+                // 用户取消输入:不视为失败,InitEnv 照常收尾
+                logger.log('用户取消服务器配置,可稍后用「创建配置」命令补全');
+                return 'ok';
+            }
+            logger.log('✅ 服务器连接配置完成');
+            return 'ok';
+        },
+    };
+}
+
 /**
  * 检查工作区,有以下几个部分
  * 1. 检查 `.vscode/astrbot-devkit-config.json`
- *     - 检查服务器状态
- *     - 检查已有的 `metadata.yaml` 文件并检索并更新
- * 2. 没有 `.vscode/astrbot-devkit-config.json` 则自己创建
- *
- * TODO: 尚未实现
+ *     - 配置缺失时扫描工作区,发现插件则引导创建配置并注册
+ *     - 配置存在时把扫描到的插件合并进 pluginWorkspaces
+ * 2. 注册后若未配置服务器连接,引导填写 server + API key
  */
-export function WorkspaceCheck() {
+export async function WorkspaceCheck() {
+    logger.separator('WorkspaceCheck');
+    logger.log('扫描工作区中的 AstrBot 插件…');
+    const cands = scanWorkspaceForPlugins();
+    if (cands.length === 0) {
+        logger.log('未检测到 AstrBot 插件(判定标准:目录含 metadata.yaml 且 name+version 可解析)');
+        vscode.window.showInformationMessage('未检测到 AstrBot 插件');
+        return;
+    }
 
+    const names = cands.map(c => c.name).join('、');
+    logger.log(`检测到 ${cands.length} 个插件:${names}`);
+
+    // 配置缺失:先引导创建,再加入(与启动时的自动检索提示行为一致)
+    if (!getConfig()) {
+        const pick = await vscode.window.showInformationMessage(
+            `检测到 ${cands.length} 个 AstrBot 插件:${names}。要创建配置并加入吗?`,
+            '创建并加入', '忽略',
+        );
+        if (pick !== '创建并加入') {
+            logger.log('用户选择忽略(可在侧边栏「创建配置文件」或再次运行本命令)');
+            return;
+        }
+        await ensureConfigFile();
+        if (!getConfig()) {
+            logger.error('配置文件创建失败');
+            vscode.window.showErrorMessage('配置文件创建失败');
+            return;
+        }
+    }
+
+    const added = await addPluginCandidates(cands);
+    if (added > 0) {
+        logger.log(`✅ 已新增 ${added} 个插件工作区`);
+        vscode.window.showInformationMessage(`已新增 ${added} 个插件工作区`);
+    } else {
+        logger.log('插件均已注册,无需新增');
+        vscode.window.showInformationMessage('插件均已注册,无需新增');
+    }
+
+    // 已注册插件但尚未配置服务器连接 → 引导填写(与启动检索一致)
+    if (!getConfig()?.astrbotAPIkey) {
+        await runConfigWizard();
+    }
 }

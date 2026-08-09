@@ -313,6 +313,37 @@ export async function setActiveWorkspace(name: string): Promise<void> {
     }
 }
 
+/**
+ * 把候选插件合并进现有配置的 pluginWorkspaces(按 name 去重,已存在则更新 version/dir),
+ * 无活跃插件时把第一个设为活跃。配置缺失时返回 0(不自动创建文件)。
+ *
+ * @returns 新增的插件数量
+ */
+export async function addPluginCandidates(cands: PluginCandidate[]): Promise<number> {
+    const cur = getConfig();
+    if (!cur) {return 0;}
+    cur.pluginWorkspaces = cur.pluginWorkspaces ?? [];
+    const existing = new Map(cur.pluginWorkspaces.map(w => [w.name, w]));
+    let added = 0;
+    for (const c of cands) {
+        const rel = toRelativePosix(c.dir) ?? c.dir;
+        const ex = existing.get(c.name);
+        if (ex) {
+            ex.version = c.version;
+            ex.dir = rel;
+        } else {
+            cur.pluginWorkspaces.push({ dir: rel, name: c.name, version: c.version, active: false });
+            added++;
+        }
+    }
+    // 没有活跃插件时,标记第一个为活跃
+    if (!cur.pluginWorkspaces.some(w => w.active) && cur.pluginWorkspaces.length > 0) {
+        cur.pluginWorkspaces[0].active = true;
+    }
+    await saveConfig(cur);
+    return added;
+}
+
 // ─── 监听 ────────────────────────────────────────────────
 
 /**

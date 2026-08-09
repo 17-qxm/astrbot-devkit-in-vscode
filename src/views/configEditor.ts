@@ -12,7 +12,7 @@ import {
 import type { PluginWorkspace } from '../config.js';
 import { getConfig } from '../config.js';
 import * as logger from '../logger.js';
-import { describeApiError, ApiError } from '../api/client.js';
+import { describeApiError } from '../api/client.js';
 
 /** 配置编辑会话(按 untitled 文档 URI 维护) */
 interface ConfigEditSession {
@@ -67,10 +67,7 @@ export async function openPluginConfig(
     const uriKey = doc.uri.toString();
     activeSessions.set(uriKey, { workspace, pluginId, schema, document: doc });
 
-    const editor = await vscode.window.showTextDocument(doc, { preview: false });
-    // 在文档顶部插一行注释提示(不影响 JSON 解析:JSON.parse 不允许注释,所以放在第一行不行;
-    // 改用编辑器标题/通知提示)
-    void editor;
+    await vscode.window.showTextDocument(doc, { preview: false });
     vscode.window.showInformationMessage(
         `${workspace.name} 配置已从服务器加载。编辑后通过命令面板执行「AstrBot: 推送插件配置到服务器」`,
     );
@@ -294,9 +291,4 @@ function escapeReg(s: string): string {
 /** 文档关闭时移除会话(由 extension 注册 onDidCloseTextDocument 调用) */
 export function forgetDocument(doc: vscode.TextDocument): void {
     activeSessions.delete(doc.uri.toString());
-}
-
-/** 判断 ApiError 是否为配置相关(用于给出更精确的提示) */
-export function isConfigError(e: unknown): boolean {
-    return e instanceof ApiError && (e.kind === 'NOT_FOUND' || e.kind === 'FORBIDDEN');
 }

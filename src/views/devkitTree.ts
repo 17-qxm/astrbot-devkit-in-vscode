@@ -5,7 +5,7 @@
 import * as vscode from 'vscode';
 import type { ConnectionState } from '../api/client.js';
 import type { PluginWorkspace } from '../config.js';
-import { getConfig, getWorkspaceRoot } from '../config.js';
+import { getConfig } from '../config.js';
 
 // ─── 节点类型 ────────────────────────────────────────────
 
@@ -209,7 +209,9 @@ export class DevkitTreeProvider implements vscode.TreeDataProvider<DevkitNode> {
             case 'checking': return '连接中…';
             case 'error': return '未连接';
             case 'unconfigured':
-            default: return '配置缺失';
+            default:
+                // 'unconfigured' 同时表示「无配置」与「已配置但未连接」,按配置是否存在区分
+                return getConfig() ? '未连接' : '配置缺失';
         }
     }
 
@@ -266,19 +268,4 @@ export class DevkitTreeProvider implements vscode.TreeDataProvider<DevkitNode> {
 
         return children;
     }
-}
-
-// ─── 取当前选中节点的辅助(extension 命令回调里用) ──────────
-
-/** 获取侧边栏当前选中节点(配合 view/item/context 菜单使用,参数透传) */
-export function nodeFromArgs(arg: unknown): DevkitNode | undefined {
-    if (arg && typeof arg === 'object' && 'kind' in arg) {
-        return arg as DevkitNode;
-    }
-    return undefined;
-}
-
-/** 检查是否打开了工作区(侧边栏依赖工作区) */
-export function hasWorkspace(): boolean {
-    return !!getWorkspaceRoot();
 }

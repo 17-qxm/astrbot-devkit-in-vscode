@@ -65,8 +65,20 @@ export class LogRelay {
         this.channel.show(true);
         logger.log('启动 SSE 日志流');
 
-        // 不 await:流是长连接,在后台跑直到 stop()
-        void this.connectLoop();
+        // 先同步探测首次连接:成功打开才返回 true,失败如实返回 false(后台会自动重连,可能自愈)
+        const reader = await this.openStream();
+        if (!this.running) {return false;}
+        if (!reader) {
+            void this.connectLoop();
+            return false;
+        }
+        this.reconnectCount = 0;
+        // 读取交给后台;流断开后由重连循环接管
+        void this.readLoop(reader).then(() => {
+            if (this.running) {
+                void this.connectLoop();
+            }
+        });
         return true;
     }
 
@@ -132,9 +144,20 @@ export class LogRelay {
 
     /** 单次连接:返回是否成功建立了连接(收到过数据则算连接成功) */
     private async connectOnce(): Promise<boolean> {
+        const reader = await this.openStream();
+        if (!reader) {return false;}
+        // 流已打开:阻塞读取直到断开(空闲超时/服务端关闭/stop 均在此结束)
+        await this.readLoop(reader);
+        return true;
+    }
+
+    /**
+     * 打开 SSE 流(fetch 成功且响应正常)。
+     * 返回 reader 表示可读取;失败返回 undefined(原因已写入日志通道)。
+     */
+    private async openStream(): Promise<ReadableStreamDefaultReader<Uint8Array> | undefined> {
         const url = this.client.baseUrl + LOGLEAK_SSE_ROUTE;
         this.abort = new AbortController();
-        let connected = false;
         try {
             const resp = await fetch(url, {
                 method: 'GET',
@@ -152,13 +175,24 @@ export class LogRelay {
                         ? '日志投射插件未安装或 AstrBot 版本过低(需 v4.24+)'
                         : `HTTP ${resp.status} ${resp.statusText}`;
                 this.channel.appendLine(`⚠️ 日志连接失败:${hint}`);
-                return false;
+                return undefined;
             }
-            this.resetIdleTimer();
-            const reader = resp.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
-            connected = true;
+            return resp.body.getReader();
+        } catch (e) {
+            if (!this.running) {return undefined;}
+            const name = (e as Error)?.name;
+            if (name === 'AbortError') {return undefined;}
+            this.channel.appendLine(`⚠️ 日志连接异常:${(e as Error)?.message ?? e}`);
+            return undefined;
+        }
+    }
+
+    /** 持续读取已打开的流,直到断开/被停止;结束前清理空闲定时器 */
+    private async readLoop(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
+        const decoder = new TextDecoder();
+        let buffer = '';
+        this.resetIdleTimer();
+        try {
             while (this.running) {
                 const { done, value } = await reader.read();
                 if (done) {break;}
@@ -173,14 +207,12 @@ export class LogRelay {
                 }
             }
         } catch (e) {
-            if (!this.running) {return connected;}
-            const name = (e as Error)?.name;
-            if (name === 'AbortError') {return connected;}
-            this.channel.appendLine(`⚠️ 日志连接异常:${(e as Error)?.message ?? e}`);
+            if (this.running && (e as Error)?.name !== 'AbortError') {
+                this.channel.appendLine(`⚠️ 日志读取异常:${(e as Error)?.message ?? e}`);
+            }
         } finally {
             if (this.idleTimer) {clearTimeout(this.idleTimer); this.idleTimer = undefined;}
         }
-        return connected;
     }
 
     /** 找到事件边界(\n\n 或 \r\n\r\n)的位置,无则 -1 */

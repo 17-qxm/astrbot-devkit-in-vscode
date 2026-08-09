@@ -48,8 +48,6 @@ export interface AstrBotClient {
 
     /** 探活:GET /api/v1/plugins,成功置 connected;失败置 error 并抛 ApiError */
     connect(timeoutMs?: number): Promise<void>;
-    /** 本地置 unconfigured/error,不发请求 */
-    disconnect(): void;
 
     /** 统一请求:拼 baseUrl + path,带 Bearer,解包 SuccessEnvelope */
     request<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<T>;
@@ -168,10 +166,6 @@ export function createClient(
                 pendingConnect = undefined;
             });
             return pendingConnect;
-        },
-
-        disconnect() {
-            setState('unconfigured');
         },
 
         request<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<T> {

@@ -5,14 +5,14 @@
 import * as vscode from 'vscode';
 import * as AstrBotMain from './main.js';
 import * as logger from './logger.js';
-import { initLogger } from './logger.js';
+import { runConfigWizard } from './configWizard.js';
 import {
     getConfig, ensureConfigFile, saveConfig, validateConfig,
     setActiveWorkspace as persistActiveWorkspace,
     getActiveWorkspace, watchConfig,
     scanWorkspaceForPlugins, isPluginRoot, getConfigFilePath,
-    toRelativePosix, getWorkspaceRoot,
-    DEFAULT_DEBUG, type PluginWorkspace, type DevKitConfig,
+    getWorkspaceRoot, addPluginCandidates,
+    type PluginWorkspace, type DevKitConfig,
 } from './config.js';
 import {
     createClient, describeApiError, type AstrBotClient, type ConnectionState,
@@ -81,7 +81,7 @@ function rebuildClient(): void {
 // ─── 激活 ────────────────────────────────────────────────
 
 export function activate(context: vscode.ExtensionContext) {
-    initLogger(context);
+    logger.initLogger(context);
     logger.log('AstrBot DevKit 扩展已激活');
 
     tree = new DevkitTreeProvider();
@@ -204,7 +204,9 @@ function registerCommands(context: vscode.ExtensionContext): void {
     });
 
     // ── 创建配置(向导) ──
-    reg('astrbot-devkit.CreateConfig', () => createConfigWizard());
+    reg('astrbot-devkit.CreateConfig', async () => {
+        await runConfigWizard(syncContext);
+    });
 
     // ── 打开配置文件 ──
     reg('astrbot-devkit.OpenConfig', async () => {
@@ -372,8 +374,11 @@ function registerCommands(context: vscode.ExtensionContext): void {
     reg('astrbot-devkit.Debug', async (arg?: unknown) => {
         const config = getConfig();
         if (!config) {
-            vscode.window.showErrorMessage('尚未配置 AstrBot 服务器', '创建配置')
-                .then(p => { if (p === '创建配置') { vscode.commands.executeCommand('astrbot-devkit.CreateConfig'); } });
+            promptCreateConfig('尚未配置 AstrBot 服务器', '创建配置');
+            return;
+        }
+        if (!config.astrbotAPIkey) {
+            promptCreateConfig('尚未配置 AstrBot API Key,请先配置服务器连接', '去配置');
             return;
         }
         let ws = workspaceFromArg(arg);
@@ -433,22 +438,17 @@ function registerCommands(context: vscode.ExtensionContext): void {
 
     // ── 打开服务器日志通道 ──
     reg('astrbot-devkit.OpenServerLogs', async () => {
-        // 确保 channel 存在(即使未 debug 也可查看历史/手动连接提示)
-        if (!relay) {
-            const config = getConfig();
-            if (config) {
-                client?.retire();
-                client = createClient(config, s => tree.setConnectionState(s, config.astrbotServer));
-                clientConfigKey = configKey(config);
-                relay = new LogRelay(client);
-            } else {
-                const ch = vscode.window.createOutputChannel(OUTPUT_CHANNEL_SERVER);
-                ch.appendLine('尚未配置 AstrBot 服务器');
-                ch.show(true);
-                return;
-            }
+        // 未配置时给出提示;已配置则复用/重建 client+relay,展示「AstrBot Server」通道
+        if (!getConfig()) {
+            const ch = vscode.window.createOutputChannel(OUTPUT_CHANNEL_SERVER);
+            ch.appendLine('尚未配置 AstrBot 服务器');
+            ch.show(true);
+            return;
         }
-        relay.outputChannel.show(true);
+        if (!relay) {
+            rebuildClient();
+        }
+        relay!.outputChannel.show(true);
     });
 
     // ── 推送消息(im,阶段 5) ──
@@ -513,15 +513,24 @@ function workspaceFromArg(arg: unknown): PluginWorkspace | undefined {
 
 /** 确保 client 就绪;未配置时引导创建 */
 function ensureClient(): boolean {
-    if (client) {return true;}
     const config = getConfig();
     if (!config) {
-        vscode.window.showErrorMessage('尚未配置 AstrBot 服务器', '创建配置')
-            .then(p => { if (p === '创建配置') { vscode.commands.executeCommand('astrbot-devkit.CreateConfig'); } });
+        promptCreateConfig('尚未配置 AstrBot 服务器', '创建配置');
         return false;
     }
+    if (!config.astrbotAPIkey) {
+        promptCreateConfig('尚未配置 AstrBot API Key,请先配置服务器连接', '去配置');
+        return false;
+    }
+    if (client) {return true;}
     rebuildClient();
     return !!client;
+}
+
+/** 提示配置缺失,并提供「创建配置」引导按钮 */
+function promptCreateConfig(message: string, actionLabel: string): void {
+    vscode.window.showErrorMessage(message, actionLabel)
+        .then(p => { if (p === actionLabel) { vscode.commands.executeCommand('astrbot-devkit.CreateConfig'); } });
 }
 
 /** 把候选插件加入 pluginWorkspaces(去重),并尝试标记第一个为活跃 */
@@ -531,28 +540,7 @@ async function addWorkspaces(cands: { dir: string; name: string; version: string
         // 配置不存在:先创建模板,再加入
         await ensureConfigFile();
     }
-    const cur = getConfig();
-    if (!cur) {return;}
-    cur.pluginWorkspaces = cur.pluginWorkspaces ?? [];
-    const existing = new Map(cur.pluginWorkspaces.map(w => [w.name, w]));
-    let added = 0;
-    for (const c of cands) {
-        const rel = toRelativePosix(c.dir) ?? c.dir;
-        const ex = existing.get(c.name);
-        if (ex) {
-            // 更新 version/dir
-            ex.version = c.version;
-            ex.dir = rel;
-        } else {
-            cur.pluginWorkspaces.push({ dir: rel, name: c.name, version: c.version, active: false });
-            added++;
-        }
-    }
-    // 没有活跃插件时,标记第一个为活跃
-    if (!cur.pluginWorkspaces.some(w => w.active)) {
-        cur.pluginWorkspaces[0].active = true;
-    }
-    await saveConfig(cur);
+    const added = await addPluginCandidates(cands);
     syncContext();
     if (added > 0) {
         vscode.window.showInformationMessage(`已加入 ${added} 个插件工作区`);
@@ -575,66 +563,6 @@ async function maybeCreateFromScan(): Promise<void> {
         await ensureConfigFile();
         await addWorkspaces(cands);
         // 创建后引导补充服务器信息
-        void createConfigWizard();
+        void runConfigWizard(syncContext);
     }
-}
-
-// ─── 创建配置向导 ────────────────────────────────────────
-
-/** 创建/补全配置向导:输入 server → API key → 探活验证 → 保存 */
-async function createConfigWizard(): Promise<void> {
-    // 1. server 地址
-    const addr = await vscode.window.showInputBox({
-        prompt: 'AstrBot 服务器地址',
-        placeHolder: '127.0.0.1:6185',
-        value: getConfig()?.astrbotServer ?? '127.0.0.1:6185',
-        ignoreFocusOut: true,
-        validateInput: v => v.trim() ? undefined : '不能为空',
-    });
-    if (!addr) {return;}
-
-    // 2. API key
-    const key = await vscode.window.showInputBox({
-        prompt: 'AstrBot API Key(abk_ 开头,在 WebUI 设置中创建)',
-        placeHolder: 'abk_xxxxxxxx',
-        password: true,
-        ignoreFocusOut: true,
-        validateInput: v => v.trim() ? undefined : '不能为空',
-    });
-    if (!key) {return;}
-
-    // 3. 立即探活验证(失败时用户可选"仍然保存")
-    const tmpConfig: DevKitConfig = {
-        version: 2,
-        astrbotServer: addr.trim(),
-        astrbotAPIkey: key.trim(),
-        debug: { ...DEFAULT_DEBUG },
-        pluginWorkspaces: getConfig()?.pluginWorkspaces ?? [],
-    };
-    const probe = createClient(tmpConfig);
-    try {
-        await vscode.window.withProgress(
-            { location: vscode.ProgressLocation.Notification, title: '验证服务器连接…' },
-            () => probe.connect(),
-        );
-        vscode.window.showInformationMessage('✅ 连接成功');
-    } catch (e) {
-        const choice = await vscode.window.showErrorMessage(
-            `连接失败:${describeApiError(e)}`, '仍然保存',
-        );
-        if (choice !== '仍然保存') {return;}
-    }
-
-    // 4. 保存(已有配置则原地更新,否则写入新配置)
-    const existing = getConfig();
-    if (existing) {
-        existing.astrbotServer = addr.trim();
-        existing.astrbotAPIkey = key.trim();
-        await saveConfig(existing);
-    } else {
-        await saveConfig(tmpConfig);
-    }
-    syncContext();
-    logger.show();
-    vscode.window.showInformationMessage('✅ 配置已保存');
 }

@@ -58,11 +58,6 @@ export async function listPlugins(
     return Array.isArray(data) ? data : (data?.plugins ?? []);
 }
 
-/** GET /api/v1/plugins/{id} — 插件详情 */
-export async function getPlugin(client: AstrBotClient, pluginId: string): Promise<PluginInfo> {
-    return client.request<PluginInfo>(`/api/v1/plugins/${encodeURIComponent(pluginId)}`);
-}
-
 /** GET /api/v1/plugins/{id}/config — 读取插件当前配置 */
 export async function getPluginConfig(
     client: AstrBotClient, pluginId: string,
