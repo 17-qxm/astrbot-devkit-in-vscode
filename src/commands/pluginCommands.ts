@@ -6,6 +6,7 @@ import {
     getConfig, getWorkspaceRoot, ensureConfigFile,
     addPluginCandidates, scanWorkspaceForPlugins, isPluginRoot,
     setActiveWorkspace as persistActiveWorkspace, getActiveWorkspace,
+    type PluginCandidate,
 } from '../config/index.js';
 import {
     openPluginConfigForm,
@@ -20,6 +21,21 @@ import { describeApiError } from '../api/client.js';
 import type { AppContext } from '../context.js';
 import type { CommandDef } from './registry.js';
 import { workspaceFromArg } from './shared.js';
+
+/** 扫描 QuickPick 里的插件项 */
+interface QuickPickPluginItem {
+    label: string;
+    description?: string;
+    detail?: string;
+    picked?: boolean;
+    candidate: PluginCandidate;
+}
+/** 扫描 QuickPick 末尾的「手动选择」项 */
+interface QuickPickManualItem {
+    label: string;
+    detail?: string;
+    manual: true;
+}
 
 /** 把候选插件加入 pluginWorkspaces(去重),并尝试标记第一个为活跃 */
 export async function addWorkspaces(
@@ -67,24 +83,52 @@ export function pluginCommands(app: AppContext): CommandDef[] {
             id: 'astrbot-devkit.ScanPlugins',
             handler: async () => {
                 const cands = scanWorkspaceForPlugins();
-                if (cands.length === 0) {
-                    vscode.window.showInformationMessage('未在工作区中检测到 AstrBot 插件(需含 metadata.yaml 且有 name+version)');
-                    return;
-                }
                 const config = getConfig();
                 const existing = new Set((config?.pluginWorkspaces ?? []).map(w => w.name));
+                // 扫描结果 + 末尾固定的「手动选择」项(即使没扫到也能手动加)
+                const items: (QuickPickPluginItem | QuickPickManualItem)[] = cands.map(c => ({
+                    label: c.name,
+                    description: c.version,
+                    detail: c.dir,
+                    picked: existing.has(c.name),
+                    candidate: c,
+                }));
+                items.push({ label: '$(folder-opened) 手动选择…', detail: '打开文件夹选择器,手动指定插件根目录', manual: true });
                 const picks = await vscode.window.showQuickPick(
-                    cands.map(c => ({
-                        label: c.name,
-                        description: c.version,
-                        detail: c.dir,
-                        picked: existing.has(c.name),
-                        candidate: c,
-                    })),
-                    { canPickMany: true, title: `检测到 ${cands.length} 个插件,选择要加入配置的`, placeHolder: '勾选要加入/保留的插件' },
+                    items,
+                    {
+                        canPickMany: true,
+                        title: cands.length > 0
+                            ? `检测到 ${cands.length} 个插件,勾选要加入/保留的`
+                            : '未检测到插件,可手动选择插件根目录',
+                        placeHolder: '勾选要加入的插件,或选「手动选择」指定目录',
+                    },
                 );
-                if (!picks) {return;}
-                await addWorkspaces(app, picks.map(p => p.candidate));
+                if (!picks || picks.length === 0) {return;}
+                // 选了「手动选择」→ 走文件夹选择器
+                if (picks.some(p => (p as QuickPickManualItem).manual)) {
+                    const root = getWorkspaceRoot();
+                    const folders = await vscode.window.showOpenDialog({
+                        canSelectFiles: false,
+                        canSelectFolders: true,
+                        canSelectMany: true,
+                        defaultUri: root ? vscode.Uri.file(root) : undefined,
+                        openLabel: '选择插件根目录(含 metadata.yaml)',
+                    });
+                    if (!folders || folders.length === 0) {return;}
+                    const manualCands = folders
+                        .map(f => isPluginRoot(f.fsPath))
+                        .filter((c): c is NonNullable<typeof c> => !!c);
+                    if (manualCands.length === 0) {
+                        vscode.window.showErrorMessage('所选目录不是插件根(缺少 metadata.yaml 或 name/version 字段)');
+                        return;
+                    }
+                    await addWorkspaces(app, manualCands);
+                    return;
+                }
+                // 纯插件勾选
+                const pluginPicks = picks as QuickPickPluginItem[];
+                await addWorkspaces(app, pluginPicks.map(p => p.candidate));
             },
         },
 
