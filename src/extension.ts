@@ -26,6 +26,10 @@ export function activate(context: vscode.ExtensionContext) {
     // 注册侧边栏视图(单一视图:服务器 + 插件操作面板 + 设置 + 日志)
     vscode.window.registerTreeDataProvider('astrbot-devkit.main', app.tree);
 
+    // 显式同步一次 workspaceEmpty:控制 welcome view(空工作区初始化引导)的显隐。
+    // 必须在 view 注册后、且不依赖 refresh 时序,确保激活时 welcome 能正确评估 when。
+    app.tree.refresh();
+
     // 构建初始 client(若已有配置)
     app.rebuildClient();
 
@@ -70,6 +74,17 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(watchConfig(() => {
         app!.handleConfigChanged();
     }));
+
+    // 工作区文件系统变化:工作区从空→非空(或反之)时,刷新 welcome view 显隐。
+    // InitEnv 完成生成插件目录、或用户手动增删文件后,welcome 需自动更新。
+    context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => {
+        app!.tree.refresh();
+    }));
+    const rootFsWatcher = vscode.workspace.createFileSystemWatcher('**/*');
+    rootFsWatcher.onDidChange(() => app!.tree.refresh());
+    rootFsWatcher.onDidCreate(() => app!.tree.refresh());
+    rootFsWatcher.onDidDelete(() => app!.tree.refresh());
+    context.subscriptions.push(rootFsWatcher);
 
     // 同步初始上下文(活跃插件等)
     app.syncContext();
