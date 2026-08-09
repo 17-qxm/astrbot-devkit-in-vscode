@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import * as logger from './logger.js';
 import { watchConfig } from './config/index.js';
 import { forgetDocument } from './views/configEditor.js';
-import { AstrBotDebugAdapter } from './debug/debugAdapter.js';
+import { AstrBotDebugAdapter } from './debug/adapter.js';
 import { AppContext } from './context.js';
 import { registerCommands } from './commands/registry.js';
 import { runStartupChecks } from './startup.js';
