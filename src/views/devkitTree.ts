@@ -73,6 +73,8 @@ export class DevkitTreeProvider implements vscode.TreeDataProvider<DevkitNode> {
     }
 
     refresh(): void {
+        // 同步「工作区是否为空」上下文:控制 welcome view(初始化引导)的显隐
+        vscode.commands.executeCommand('setContext', 'astrbotDevkit.workspaceEmpty', this.isWorkspaceEmpty());
         this._emitter.fire(undefined);
     }
 
@@ -104,19 +106,10 @@ export class DevkitTreeProvider implements vscode.TreeDataProvider<DevkitNode> {
         }
     }
 
-    /** 根 → 服务器 + 插件 + 设置组 + 日志 */
+    /** 根 → 服务器 + 插件 + 设置组 + 日志。
+     *  注:工作区为空时由 viewsWelcome 接管(显示初始化引导),此处不重复返回入口 */
     private rootChildren(): DevkitNode[] {
         const children: DevkitNode[] = [];
-
-        // 0. 工作区为空(没开任何文件/文件夹,只有忽略目录)→ 显示初始化入口
-        if (this.isWorkspaceEmpty()) {
-            children.push({
-                kind: 'placeholder',
-                message: '初始化插件环境',
-                command: 'astrbot-devkit-in-vscode.InitEnv',
-            });
-            return children;
-        }
 
         // 1. 服务器节点(始终显示)
         const config = getConfig();
