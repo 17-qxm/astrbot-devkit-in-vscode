@@ -12,3 +12,6 @@ docs/
 .tmp/
 __pycache__/
 *.pyc
+
+# 临时构建产物
+tmp/

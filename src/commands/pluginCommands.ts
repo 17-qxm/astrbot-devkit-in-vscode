@@ -8,7 +8,10 @@ import {
     setActiveWorkspace as persistActiveWorkspace, getActiveWorkspace,
 } from '../config/index.js';
 import {
-    openPluginConfig, pushPluginConfig,
+    openPluginConfigForm,
+} from '../views/configForm.js';
+import {
+    pushPluginConfig,
 } from '../views/configEditor.js';
 import type { AppContext } from '../context.js';
 import type { CommandDef } from './registry.js';
@@ -92,7 +95,7 @@ export function pluginCommands(app: AppContext): CommandDef[] {
             },
         },
 
-        // ── 打开插件配置 ──
+        // ── 打开插件配置(默认走表单;表单内可切到原始 JSON)──
         {
             id: 'astrbot-devkit.OpenPluginConfig',
             handler: async (arg: unknown) => {
@@ -102,7 +105,7 @@ export function pluginCommands(app: AppContext): CommandDef[] {
                     vscode.window.showWarningMessage('请先选择一个插件工作区');
                     return;
                 }
-                await openPluginConfig(app.client!, ws);
+                await openPluginConfigForm(app.client!, ws);
             },
         },
 

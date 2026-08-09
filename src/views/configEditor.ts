@@ -125,6 +125,19 @@ export async function pushPluginConfig(client: AstrBotClient, editor: vscode.Tex
     vscode.window.showInformationMessage(`✅ ${workspace.name} 配置已推送`);
 
     // 4. reloadAfterPush
+    await askReloadAfterPush(client, pluginId, workspace.name);
+}
+
+/**
+ * 按 debug.reloadAfterPush 策略询问/执行重载。
+ * - never:直接返回
+ * - always:静默重载
+ * - ask:弹「重载/不重载」
+ * 供 JSON 文档路径(pushPluginConfig)与 webview 表单路径(configForm)共用。
+ */
+export async function askReloadAfterPush(
+    client: AstrBotClient, pluginId: string, pluginName: string,
+): Promise<void> {
     const reloadPolicy = getConfig()?.debug.reloadAfterPush ?? 'ask';
     if (reloadPolicy === 'never') {return;}
     let shouldReload = false;
@@ -132,7 +145,7 @@ export async function pushPluginConfig(client: AstrBotClient, editor: vscode.Tex
         shouldReload = true;
     } else {
         const pick = await vscode.window.showInformationMessage(
-            `${workspace.name} 配置已推送,是否重载插件使配置生效?`,
+            `${pluginName} 配置已推送,是否重载插件使配置生效?`,
             '重载', '不重载',
         );
         shouldReload = pick === '重载';
@@ -140,7 +153,7 @@ export async function pushPluginConfig(client: AstrBotClient, editor: vscode.Tex
     if (shouldReload) {
         try {
             await reloadPlugin(client, pluginId);
-            vscode.window.showInformationMessage(`✅ ${workspace.name} 已重载`);
+            vscode.window.showInformationMessage(`✅ ${pluginName} 已重载`);
         } catch (e) {
             vscode.window.showErrorMessage(`重载失败:${describeApiError(e)}`);
         }
