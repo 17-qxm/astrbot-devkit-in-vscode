@@ -7,7 +7,7 @@ import * as vscode from 'vscode';
 import type { ConnectionState } from '../api/client.js';
 import type { PluginInfo } from '../api/plugins.js';
 import type { PluginWorkspace } from '../config/index.js';
-import { getConfig } from '../config/index.js';
+import { getConfig, isWorkspaceEmpty } from '../config/index.js';
 
 // ─── 节点类型 ────────────────────────────────────────────
 
@@ -90,6 +90,15 @@ export class DevkitTreeProvider implements vscode.TreeDataProvider<DevkitNode> {
     /** 根 → 服务器 + 插件 + 设置组 + 日志 */
     private rootChildren(): DevkitNode[] {
         const children: DevkitNode[] = [];
+
+        // 0. 工作区严格为空 → 顶部常驻「初始化插件环境」入口(与激活弹窗互补,弹窗可被忽略/关闭)
+        if (isWorkspaceEmpty()) {
+            children.push({
+                kind: 'placeholder',
+                message: '初始化插件环境',
+                command: 'astrbot-devkit-in-vscode.InitEnv',
+            });
+        }
 
         // 1. 服务器节点(始终显示)
         const config = getConfig();

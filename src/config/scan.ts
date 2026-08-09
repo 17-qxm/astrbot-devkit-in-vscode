@@ -177,3 +177,19 @@ export function getLocalConfigSchema(dirRel: string): ConfigSchema | undefined {
         return undefined;
     }
 }
+
+/**
+ * 工作区根是否为「空」:除约定忽略目录(.git/.vscode/.tmp 等)外没有任何条目。
+ * 用于判定是否该显示「初始化插件环境」引导(弹窗 + 侧边栏入口)。
+ * 未打开工作区时返回 false。
+ */
+export function isWorkspaceEmpty(): boolean {
+    const root = getWorkspaceRoot();
+    if (!root) {return false;}
+    try {
+        const entries = fs.readdirSync(root, { withFileTypes: true });
+        return !entries.some(e => !SCAN_EXCLUDE_DIRS.has(e.name));
+    } catch {
+        return false;
+    }
+}

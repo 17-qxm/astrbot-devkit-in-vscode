@@ -3,10 +3,8 @@
 // 启动检查由 startup 负责。见 design.md §3 / implementation.md §10。
 
 import * as vscode from 'vscode';
-import * as fs from 'fs';
 import * as logger from './logger.js';
-import { watchConfig, getWorkspaceRoot } from './config/index.js';
-import { SCAN_EXCLUDE_DIRS } from './constants.js';
+import { watchConfig, isWorkspaceEmpty } from './config/index.js';
 import { InitEnv } from './initenv/index.js';
 import { forgetDocument } from './views/configEditor.js';
 import { AstrBotDebugAdapter } from './debug/adapter.js';
@@ -117,17 +115,5 @@ async function promptInitOnEmptyWorkspace(
     } else if (pick === '以后不再弹出') {
         await context.workspaceState.update(SUPPRESS_EMPTY_PROMPT_KEY, true);
         logger.log('用户选择以后不再弹出空工作区初始化提示(仅本工作区)');
-    }
-}
-
-/** 工作区根是否为「空」:除约定忽略目录外没有任何条目 */
-function isWorkspaceEmpty(): boolean {
-    const root = getWorkspaceRoot();
-    if (!root) {return false;}   // 没开工作区不弹
-    try {
-        const entries = fs.readdirSync(root, { withFileTypes: true });
-        return !entries.some(e => !SCAN_EXCLUDE_DIRS.has(e.name));
-    } catch {
-        return false;
     }
 }
