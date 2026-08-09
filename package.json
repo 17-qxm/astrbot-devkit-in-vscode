@@ -268,13 +268,6 @@
         "fileMatch": ".vscode/astrbot-devkit-config.json",
         "url": "./schemas/astrbot-devkit-config-schemas.json"
       }
-    ],
-    "viewsWelcome": [
-      {
-        "view": "astrbot-devkit.main",
-        "contents": "工作区是空的。\n初始化一个 AstrBot 插件开发环境:[初始化插件环境](command:astrbot-devkit-in-vscode.InitEnv)\n了解如何开发插件,请阅读[AstrBot 文档](https://docs.astrbot.app/)",
-        "when": "view == astrbot-devkit.main && astrbotDevkit.workspaceEmpty"
-      }
     ]
   },
   "scripts": {

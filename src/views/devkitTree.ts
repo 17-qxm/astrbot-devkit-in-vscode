@@ -4,12 +4,10 @@
 // 见 design.md §7 / implementation.md §6。
 
 import * as vscode from 'vscode';
-import * as fs from 'fs';
 import type { ConnectionState } from '../api/client.js';
 import type { PluginInfo } from '../api/plugins.js';
 import type { PluginWorkspace } from '../config/index.js';
-import { getConfig, getWorkspaceRoot } from '../config/index.js';
-import { SCAN_EXCLUDE_DIRS } from '../constants.js';
+import { getConfig } from '../config/index.js';
 
 // ─── 节点类型 ────────────────────────────────────────────
 
@@ -73,8 +71,6 @@ export class DevkitTreeProvider implements vscode.TreeDataProvider<DevkitNode> {
     }
 
     refresh(): void {
-        // 同步「工作区是否为空」上下文:控制 welcome view(初始化引导)的显隐
-        vscode.commands.executeCommand('setContext', 'astrbotDevkit.workspaceEmpty', this.isWorkspaceEmpty());
         this._emitter.fire(undefined);
     }
 
@@ -91,23 +87,7 @@ export class DevkitTreeProvider implements vscode.TreeDataProvider<DevkitNode> {
 
     // ─── 子项构造 ────────────────────────────────────────
 
-    /**
-     * 工作区根是否为「空」:除约定忽略目录(.git/.vscode/.tmp 等)外没有任何条目。
-     * 用于判定是否该显示「初始化插件环境」入口。
-     */
-    private isWorkspaceEmpty(): boolean {
-        const root = getWorkspaceRoot();
-        if (!root) {return false;}   // 没开工作区不算「空」,走另一条提示
-        try {
-            const entries = fs.readdirSync(root, { withFileTypes: true });
-            return !entries.some(e => !SCAN_EXCLUDE_DIRS.has(e.name));
-        } catch {
-            return false;
-        }
-    }
-
-    /** 根 → 服务器 + 插件 + 设置组 + 日志。
-     *  注:工作区为空时由 viewsWelcome 接管(显示初始化引导),此处不重复返回入口 */
+    /** 根 → 服务器 + 插件 + 设置组 + 日志 */
     private rootChildren(): DevkitNode[] {
         const children: DevkitNode[] = [];
 

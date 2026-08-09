@@ -3,8 +3,11 @@
 // 启动检查由 startup 负责。见 design.md §3 / implementation.md §10。
 
 import * as vscode from 'vscode';
+import * as fs from 'fs';
 import * as logger from './logger.js';
-import { watchConfig } from './config/index.js';
+import { watchConfig, getWorkspaceRoot } from './config/index.js';
+import { SCAN_EXCLUDE_DIRS } from './constants.js';
+import { InitEnv } from './initenv/index.js';
 import { forgetDocument } from './views/configEditor.js';
 import { AstrBotDebugAdapter } from './debug/adapter.js';
 import { AppContext } from './context.js';
@@ -25,10 +28,6 @@ export function activate(context: vscode.ExtensionContext) {
 
     // 注册侧边栏视图(单一视图:服务器 + 插件操作面板 + 设置 + 日志)
     vscode.window.registerTreeDataProvider('astrbot-devkit.main', app.tree);
-
-    // 显式同步一次 workspaceEmpty:控制 welcome view(空工作区初始化引导)的显隐。
-    // 必须在 view 注册后、且不依赖 refresh 时序,确保激活时 welcome 能正确评估 when。
-    app.tree.refresh();
 
     // 构建初始 client(若已有配置)
     app.rebuildClient();
@@ -75,25 +74,60 @@ export function activate(context: vscode.ExtensionContext) {
         app!.handleConfigChanged();
     }));
 
-    // 工作区文件系统变化:工作区从空→非空(或反之)时,刷新 welcome view 显隐。
-    // InitEnv 完成生成插件目录、或用户手动增删文件后,welcome 需自动更新。
-    context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => {
-        app!.tree.refresh();
-    }));
-    const rootFsWatcher = vscode.workspace.createFileSystemWatcher('**/*');
-    rootFsWatcher.onDidChange(() => app!.tree.refresh());
-    rootFsWatcher.onDidCreate(() => app!.tree.refresh());
-    rootFsWatcher.onDidDelete(() => app!.tree.refresh());
-    context.subscriptions.push(rootFsWatcher);
-
     // 同步初始上下文(活跃插件等)
     app.syncContext();
 
     // 启动检查:配置缺失则检索提示;已有配置则静默探活 + 校验
     void runStartupChecks(app);
+
+    // 空工作区引导:工作区严格为空时,弹窗问是否初始化(可「以后不再弹出」)
+    void promptInitOnEmptyWorkspace(context, app);
 }
 
 export function deactivate() {
     app?.dispose();
     app = undefined;
+}
+
+// ─── 空工作区引导 ─────────────────────────────────────────
+
+/** globalState key:用户选过「以后不再弹出」后置为 true */
+const SUPPRESS_EMPTY_PROMPT_KEY = 'suppressEmptyWorkspacePrompt';
+
+/**
+ * 工作区严格为空(除约定忽略目录外无任何条目)时,弹 InformationMessage 问是否初始化。
+ * - 选「初始化」→ 走 InitEnv
+ * - 选「以后不再弹出」→ 记到 workspaceState(仅本工作区),换工作区仍会提示
+ * - 关闭/ESC → 本次不初始化,下次打开本工作区仍会问
+ */
+async function promptInitOnEmptyWorkspace(
+    context: vscode.ExtensionContext, _app: AppContext,
+): Promise<void> {
+    if (!isWorkspaceEmpty()) {return;}
+    // 用户已选过「以后不再弹出」(workspaceState:仅本工作区生效)
+    if (context.workspaceState.get<boolean>(SUPPRESS_EMPTY_PROMPT_KEY)) {return;}
+
+    const pick = await vscode.window.showInformationMessage(
+        '当前工作区是空的,是否初始化 AstrBot 插件开发环境?',
+        '初始化',
+        '以后不再弹出',
+    );
+    if (pick === '初始化') {
+        void InitEnv();
+    } else if (pick === '以后不再弹出') {
+        await context.workspaceState.update(SUPPRESS_EMPTY_PROMPT_KEY, true);
+        logger.log('用户选择以后不再弹出空工作区初始化提示(仅本工作区)');
+    }
+}
+
+/** 工作区根是否为「空」:除约定忽略目录外没有任何条目 */
+function isWorkspaceEmpty(): boolean {
+    const root = getWorkspaceRoot();
+    if (!root) {return false;}   // 没开工作区不弹
+    try {
+        const entries = fs.readdirSync(root, { withFileTypes: true });
+        return !entries.some(e => !SCAN_EXCLUDE_DIRS.has(e.name));
+    } catch {
+        return false;
+    }
 }
