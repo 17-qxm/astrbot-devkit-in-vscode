@@ -368,9 +368,3 @@ export async function getLatestRelease(repo: string): Promise<GitHubRelease | un
         return undefined;
     }
 }
-
-// ─── 待实现 ──────────────────────────────────────────────
-
-/** 我们需要检查设置,然后返回相应的内容 */
-export async function CheckSettings() {
-}
