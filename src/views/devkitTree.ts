@@ -4,10 +4,12 @@
 // 见 design.md §7 / implementation.md §6。
 
 import * as vscode from 'vscode';
+import * as fs from 'fs';
 import type { ConnectionState } from '../api/client.js';
 import type { PluginInfo } from '../api/plugins.js';
 import type { PluginWorkspace } from '../config/index.js';
-import { getConfig } from '../config/index.js';
+import { getConfig, getWorkspaceRoot } from '../config/index.js';
+import { SCAN_EXCLUDE_DIRS } from '../constants.js';
 
 // ─── 节点类型 ────────────────────────────────────────────
 
@@ -87,9 +89,34 @@ export class DevkitTreeProvider implements vscode.TreeDataProvider<DevkitNode> {
 
     // ─── 子项构造 ────────────────────────────────────────
 
+    /**
+     * 工作区根是否为「空」:除约定忽略目录(.git/.vscode/.tmp 等)外没有任何条目。
+     * 用于判定是否该显示「初始化插件环境」入口。
+     */
+    private isWorkspaceEmpty(): boolean {
+        const root = getWorkspaceRoot();
+        if (!root) {return false;}   // 没开工作区不算「空」,走另一条提示
+        try {
+            const entries = fs.readdirSync(root, { withFileTypes: true });
+            return !entries.some(e => !SCAN_EXCLUDE_DIRS.has(e.name));
+        } catch {
+            return false;
+        }
+    }
+
     /** 根 → 服务器 + 插件 + 设置组 + 日志 */
     private rootChildren(): DevkitNode[] {
         const children: DevkitNode[] = [];
+
+        // 0. 工作区为空(没开任何文件/文件夹,只有忽略目录)→ 显示初始化入口
+        if (this.isWorkspaceEmpty()) {
+            children.push({
+                kind: 'placeholder',
+                message: '初始化插件环境',
+                command: 'astrbot-devkit-in-vscode.InitEnv',
+            });
+            return children;
+        }
 
         // 1. 服务器节点(始终显示)
         const config = getConfig();
@@ -100,7 +127,7 @@ export class DevkitTreeProvider implements vscode.TreeDataProvider<DevkitNode> {
         if (!config) {
             children.push({
                 kind: 'placeholder',
-                message: '尚未配置 AstrBot 服务器',
+                message: '配置服务器',
                 command: 'astrbot-devkit.CreateConfig',
             });
             return children;
